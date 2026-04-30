@@ -49,7 +49,6 @@ const LEAD_STATUSES_UI=[
 const LEAD_BRANDS_UI=[
   {key:'NDT',  color:'#FF6A00'},
   {key:'AMAZE',color:'#A78BFA'},
-  {key:'BOOTH',color:'#34D399'},
 ];
 const LEAD_TYPES_UI=['Event','DryHire'];
 const LEAD_SOURCES_UI=['Phone','Referral','Instagram','Website','WalkIn','Other'];
@@ -60,7 +59,6 @@ const fmtDate=d=>d?new Date(d+'T12:00:00').toLocaleDateString('el-GR',{day:'2-di
 const daysSince=(iso)=>{if(!iso)return null;const d=new Date(iso);if(isNaN(d.getTime()))return null;return Math.floor((Date.now()-d.getTime())/(1000*60*60*24));};
 const fmtDays=(n)=>n===null?'—':n===0?'σήμερα':n===1?'1μ':n+'μ';
 const leadStatusInfo=(s)=>LEAD_STATUSES_UI.find(x=>x.key===s)||{key:s,label:s,color:'#6B7280'};
-const leadBrandInfo=(b)=>LEAD_BRANDS_UI.find(x=>x.key===b)||{key:b,color:'#6B7280'};
 
 // ─── API ──────────────────────────────────────────────────────────────────
 const call = (fn, ...args) => {
@@ -95,10 +93,6 @@ function Inp({label,value,onChange,type,placeholder,multi,options}){
 function StatusBadge({status,small}){
   const i=leadStatusInfo(status);
   return <span style={{background:i.color+'22',color:i.color,border:`1px solid ${i.color}44`,borderRadius:6,padding:small?'2px 7px':'3px 9px',fontSize:small?10:11,fontWeight:700,whiteSpace:'nowrap'}}>{i.label}</span>;
-}
-function BrandBadge({brand}){
-  const i=leadBrandInfo(brand);
-  return <span style={{background:i.color+'22',color:i.color,border:`1px solid ${i.color}44`,borderRadius:6,padding:'2px 7px',fontSize:10,fontWeight:700,fontFamily:"'DM Mono',monospace",letterSpacing:1}}>{brand||'—'}</span>;
 }
 
 // ─── LOGIN (PIN-once-saved) ───────────────────────────────────────────────
@@ -251,6 +245,8 @@ function ListView({pin,onAdd,onLogout}){
   const [busyId,setBusyId]=useState(null);
   const [lostFor,setLostFor]=useState(null);  // lead pending Lost
   const [convertFor,setConvertFor]=useState(null); // lead pending Won
+  const [noteFor,setNoteFor]=useState(null);  // leadId with open note panel
+  const [noteText,setNoteText]=useState('');
   const [toast,setToast]=useState('');
 
   const load=async()=>{
@@ -271,7 +267,7 @@ function ListView({pin,onAdd,onLogout}){
 
   const filtered=React.useMemo(()=>{
     let arr=(leads||[]).slice();
-    if(brandFilter!=='all')arr=arr.filter(l=>l.Brand===brandFilter);
+    if(brandFilter!=='all')arr=arr.filter(l=>detectBrand(l.EventType)===brandFilter);
     if(filter==='active')arr=arr.filter(l=>['New','Contacted','Proposal_Sent','Negotiating'].includes(l.Status));
     else if(filter==='won')arr=arr.filter(l=>l.Status==='Won');
     else if(filter==='lost')arr=arr.filter(l=>l.Status==='Lost');
@@ -307,6 +303,14 @@ function ListView({pin,onAdd,onLogout}){
   const submitLost=async(reason,note)=>{
     setBusyId(lostFor.LeadID);
     try{await call('updateLeadStatus',pin,lostFor.LeadID,'Lost',{lostReason:reason,lostReasonNote:note});await load();setLostFor(null);flash('✅');}
+    catch(e){flash('❌ '+e.message);}
+    setBusyId(null);
+  };
+
+  const submitNote=async(leadId)=>{
+    if(!noteText.trim())return;
+    setBusyId(leadId);
+    try{await call('addLeadCommNote',pin,leadId,noteText.trim());await load();setNoteFor(null);setNoteText('');flash('✅ Σημείωση αποθηκεύτηκε');}
     catch(e){flash('❌ '+e.message);}
     setBusyId(null);
   };
@@ -359,7 +363,8 @@ function ListView({pin,onAdd,onLogout}){
     </div>
     <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:8,marginBottom:14}}>
       <Chip active={brandFilter==='all'} onClick={()=>setBrandFilter('all')}>Όλα brands</Chip>
-      {LEAD_BRANDS_UI.map(b=><Chip key={b.key} active={brandFilter===b.key} onClick={()=>setBrandFilter(b.key)} color={b.color}>{b.key}</Chip>)}
+      <Chip active={brandFilter==='AMAZE'} onClick={()=>setBrandFilter('AMAZE')} color='#A78BFA'>AMAZE</Chip>
+      <Chip active={brandFilter==='NDT'} onClick={()=>setBrandFilter('NDT')} color='#FF6A00'>NDT</Chip>
     </div>
 
     {loading
@@ -376,14 +381,15 @@ function ListView({pin,onAdd,onLogout}){
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,marginBottom:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:15,fontWeight:700,marginBottom:3,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{l.ContactName||'—'}</div>
-                    <Mono s c={C.mu} style={{letterSpacing:1.5}}>{l.ContactCode}{l.EventDate?' · '+fmtDate(l.EventDate):''}{l.Phone?' · '+l.Phone:''}</Mono>
+                    <Mono s c={C.mu} style={{letterSpacing:1.5}}>{l.ContactCode}{l.EventDate?' · '+fmtDate(l.EventDate):''}{l.EventType?' · '+l.EventType:''}</Mono>
                   </div>
-                  <BrandBadge brand={l.Brand}/>
+                  <span style={{fontSize:10,fontWeight:700,letterSpacing:1,color:brandColor(l.EventType),fontFamily:"'DM Mono',monospace"}}>{detectBrand(l.EventType)}</span>
                 </div>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:isActive?10:0}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:isActive?8:0}}>
                   <StatusBadge status={l.Status} small/>
                   <Mono s c={stale?C.wa:C.mu}>{stale?'⚠ ':''}{fmtDays(days)}</Mono>
                 </div>
+                {l.CommunicationLog&&<Mono s c={C.mu} style={{marginBottom:8,fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>💬 {String(l.CommunicationLog).split('\n').pop()}</Mono>}
                 {isActive&&<div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
                   {l.Status!=='Contacted'&&<button disabled={isBusy} onClick={()=>doStatus(l,'Contacted')} style={chipStyle(leadStatusInfo('Contacted').color,isBusy)}>Επικοιν.</button>}
                   {l.Status!=='Proposal_Sent'&&<button disabled={isBusy} onClick={()=>doStatus(l,'Proposal_Sent')} style={chipStyle(leadStatusInfo('Proposal_Sent').color,isBusy)}>Προσφορά</button>}
@@ -393,6 +399,24 @@ function ListView({pin,onAdd,onLogout}){
                   <button disabled={isBusy} onClick={()=>doStatus(l,'Cold')} style={chipStyle(leadStatusInfo('Cold').color,isBusy)}>Cold</button>
                 </div>}
                 {l.Status==='Lost'&&l.LostReason&&<Mono s c={C.mu} style={{marginTop:6}}>Λόγος: {LOST_REASONS_UI[l.LostReason]||l.LostReason}</Mono>}
+                {/* Note panel */}
+                <div style={{marginTop:8,borderTop:`1px solid ${C.br}`,paddingTop:8}}>
+                  {noteFor===l.LeadID
+                    ?<div style={{display:'flex',gap:6}}>
+                      <input autoFocus value={noteText} onChange={e=>setNoteText(e.target.value)}
+                        placeholder="Σημείωση επικοινωνίας…"
+                        style={{flex:1,background:C.s2,border:`1px solid ${C.br}`,borderRadius:8,padding:'8px 10px',color:C.tx,fontFamily:"'Bricolage Grotesque',sans-serif",fontSize:13,outline:'none'}}
+                        onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submitNote(l.LeadID);}}}
+                      />
+                      <button disabled={isBusy||!noteText.trim()} onClick={()=>submitNote(l.LeadID)}
+                        style={{background:C.ac,color:'#000',border:'none',borderRadius:8,padding:'0 14px',fontWeight:700,fontSize:13,cursor:'pointer',opacity:(isBusy||!noteText.trim())?0.5:1}}>✓</button>
+                      <button onClick={()=>{setNoteFor(null);setNoteText('');}}
+                        style={{background:'none',border:`1px solid ${C.br}`,color:C.mu,borderRadius:8,padding:'0 10px',cursor:'pointer'}}>✕</button>
+                    </div>
+                    :<button onClick={()=>{setNoteFor(l.LeadID);setNoteText('');}}
+                      style={{background:'none',border:`1px solid ${C.br}`,color:C.mu,borderRadius:8,padding:'5px 10px',fontSize:12,cursor:'pointer',width:'100%'}}>+ Σημείωση</button>
+                  }
+                </div>
               </Card>);
             })}
           </div>
