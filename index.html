@@ -134,7 +134,7 @@ function PinScreen({onAuth}){
 // ─── ADD FORM ─────────────────────────────────────────────────────────────
 function QuickAddForm({pin,onSaved,onCancel}){
   const [f,setF]=useState({
-    brand:'AMAZE',type:'Event',source:'Phone',referredBy:'',
+    source:'Phone',referredBy:'',
     contactName:'',phone:'',email:'',
     eventType:'Wedding',eventDate:'',venue:'',estimatedValue:'',
     notes:''
@@ -158,10 +158,7 @@ function QuickAddForm({pin,onSaved,onCancel}){
     </div>
 
     <div style={{display:'flex',flexDirection:'column',gap:12}}>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-        <Inp label="Brand" value={f.brand} onChange={v=>s('brand',v)} options={LEAD_BRANDS_UI.map(b=>b.key)}/>
-        <Inp label="Τύπος" value={f.type} onChange={v=>s('type',v)} options={LEAD_TYPES_UI}/>
-      </div>
+
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
         <Inp label="Πηγή" value={f.source} onChange={v=>s('source',v)} options={LEAD_SOURCES_UI}/>
         <Inp label="Από ποιον" value={f.referredBy} onChange={v=>s('referredBy',v)}/>
@@ -176,6 +173,7 @@ function QuickAddForm({pin,onSaved,onCancel}){
         <Inp label="Τύπος event" value={f.eventType} onChange={v=>s('eventType',v)} options={LEAD_EVENT_TYPES_UI}/>
         <Inp label="Ημερομηνία" value={f.eventDate} onChange={v=>s('eventDate',v)} type="date"/>
       </div>
+      <div style={{fontSize:11,color:AMAZE_EV_TYPES.includes(f.eventType)?'#A78BFA':'#FF6A00',fontFamily:"'DM Mono',monospace",letterSpacing:1,marginTop:-4}}>→ {AMAZE_EV_TYPES.includes(f.eventType)?'AMAZE DJs':'NDT Event Production'}</div>
       <Inp label="Χώρος" value={f.venue} onChange={v=>s('venue',v)}/>
       <Inp label="Εκτιμώμενο €" value={f.estimatedValue} onChange={v=>s('estimatedValue',v)} type="number"/>
       <Inp label="Σημειώσεις" value={f.notes} onChange={v=>s('notes',v)} multi/>
