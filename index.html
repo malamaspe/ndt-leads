@@ -457,6 +457,7 @@ const chipStyle=(color,disabled)=>({
 function App(){
   const [pin,setPin]=useState(null);
   const [adding,setAdding]=useState(false);
+  const [clients,setClients]=useState([]);
 
   useEffect(()=>{
     const saved=localStorage.getItem(PIN_KEY);
@@ -468,6 +469,11 @@ function App(){
     localStorage.removeItem(PIN_KEY);
     setPin(null);
   };
+
+  useEffect(()=>{
+    if(!pin) return;
+    call('getClients',pin).then(d=>setClients(d||[])).catch(()=>{});
+  },[pin]);
 
   if(!pin) return <PinScreen onAuth={setPin}/>;
   if(adding) return <QuickAddForm pin={pin} clients={clients} onSaved={()=>setAdding(false)} onCancel={()=>setAdding(false)}/>;
