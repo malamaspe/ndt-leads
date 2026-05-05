@@ -210,35 +210,6 @@ function LostSheet({onSubmit,onCancel,busy}){
 }
 
 // ─── CONVERT MODAL ────────────────────────────────────────────────────────
-function ConvertSheet({lead,onSubmit,onCancel,busy}){
-  const [name,setName]=useState(lead.ContactName||'');
-  const [phone,setPhone]=useState(lead.Phone||'');
-  const [email,setEmail]=useState(lead.Email||'');
-
-  return(
-    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:100,display:'flex',alignItems:'flex-end'}} onClick={onCancel}>
-      <div onClick={e=>e.stopPropagation()} style={{background:C.s1,border:`1px solid ${C.br}`,borderTopLeftRadius:16,borderTopRightRadius:16,padding:'20px 22px 28px',width:'100%',maxHeight:'90vh',overflowY:'auto'}}>
-        <div style={{width:40,height:4,background:C.br,borderRadius:2,margin:'0 auto 14px'}}/>
-        <h3 style={{fontSize:18,fontWeight:800,marginBottom:6}}>Κερδισμένο · Lead → Πελάτης</h3>
-        <Mono s c={C.mu} style={{marginBottom:14}}>Επιβεβαίωση στοιχείων</Mono>
-        <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:14}}>
-          <Inp label="Όνομα *" value={name} onChange={setName}/>
-          <Inp label="Τηλέφωνο" value={phone} onChange={setPhone}/>
-          <Inp label="Email" value={email} onChange={setEmail} type="email"/>
-        </div>
-        <div style={{fontSize:12,color:C.mu,marginBottom:14,padding:10,background:C.s2,borderRadius:8,lineHeight:1.5}}>
-          Για να φτιάξεις και Event με τα στοιχεία του lead, μπες στο NDT Ops από υπολογιστή.
-        </div>
-        <div style={{display:'flex',gap:8}}>
-          <Btn onClick={onCancel} style={{flex:1}}>Άκυρο</Btn>
-          <Btn accent onClick={()=>onSubmit({name,phone,email})} disabled={busy||!name.trim()} style={{flex:2}}>{busy?<Spin/>:'Μετατροπή'}</Btn>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── LIST ─────────────────────────────────────────────────────────────────
 function ListView({pin,onAdd,onLogout}){
   const [leads,setLeads]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -247,7 +218,6 @@ function ListView({pin,onAdd,onLogout}){
   const [search,setSearch]=useState('');
   const [busyId,setBusyId]=useState(null);
   const [lostFor,setLostFor]=useState(null);  // lead pending Lost
-  const [convertFor,setConvertFor]=useState(null);
   const [noteFor,setNoteFor]=useState(null);
   const [noteText,setNoteText]=useState('');
   const [toast,setToast]=useState('');
@@ -294,7 +264,14 @@ function ListView({pin,onAdd,onLogout}){
   };
 
   const doStatus=async(lead,newStatus)=>{
-    if(newStatus==='Won'){setConvertFor(lead);return;}
+    if(newStatus==='Won'){
+      if(!confirm('Μετατροπή σε πελάτη και αυτόματη δημιουργία event;'))return;
+      setBusyId(lead.LeadID);
+      try{await call('convertLeadToClient',pin,lead.LeadID,{});await load();flash('✅ Πελάτης και event δημιουργήθηκαν');}
+      catch(e){flash('❌ '+e.message);}
+      setBusyId(null);
+      return;
+    }
     if(newStatus==='Lost'){setLostFor(lead);return;}
     if(!confirm(`"${lead.ContactName}" → ${leadStatusInfo(newStatus).label};`))return;
     setBusyId(lead.LeadID);
@@ -315,17 +292,6 @@ function ListView({pin,onAdd,onLogout}){
     setBusyId(leadId);
     try{await call('addLeadCommNote',pin,leadId,noteText.trim());await load();setNoteFor(null);setNoteText('');flash('✅ Σημείωση αποθηκεύτηκε');}
     catch(e){flash('❌ '+e.message);}
-    setBusyId(null);
-  };
-
-  const submitConvert=async(data)=>{
-    setBusyId(convertFor.LeadID);
-    try{
-      await call('convertLeadToClient',pin,convertFor.LeadID,data,false);
-      await load();
-      setConvertFor(null);
-      flash('✅ Πελάτης δημιουργήθηκε');
-    }catch(e){flash('❌ '+e.message);}
     setBusyId(null);
   };
 
@@ -438,9 +404,6 @@ function ListView({pin,onAdd,onLogout}){
     {lostFor&&<LostSheet busy={busyId===lostFor.LeadID}
       onCancel={()=>setLostFor(null)}
       onSubmit={submitLost}/>}
-    {convertFor&&<ConvertSheet lead={convertFor} busy={busyId===convertFor.LeadID}
-      onCancel={()=>setConvertFor(null)}
-      onSubmit={submitConvert}/>}
   </div>);
 }
 
