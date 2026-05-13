@@ -180,7 +180,7 @@ function QuickAddForm({pin,onSaved,onCancel,clients}){
         <Inp label="Ημερομηνία" value={f.eventDate} onChange={v=>s('eventDate',v)} type="date"/>
       </div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:-4}}>
-        <div style={{fontSize:11,color:brandColor(f.eventType),fontFamily:"'DM Mono',monospace",letterSpacing:1>→ {detectBrand(f.eventType)==='AMAZE'?'AMAZE DJs':'NDT Event Production'}</div>
+        <div style={{fontSize:11,color:brandColor(f.eventType),fontFamily:"'DM Mono',monospace",letterSpacing:1}}>→ {detectBrand(f.eventType)==='AMAZE'?'AMAZE DJs':'NDT Event Production'}</div>
         <div style={{display:'flex',gap:4}}>{['GR','EN'].map(l=><button key={l} onClick={()=>s('language',l)} style={{padding:'2px 8px',borderRadius:5,border:`1px solid ${C.br}`,background:f.language===l?C.ac:C.s2,color:f.language===l?'#000':C.tx,fontWeight:700,fontSize:11,cursor:'pointer'}}>{l}</button>)}</div>
       </div>
       <Inp label="Χώρος" value={f.venue} onChange={v=>s('venue',v)}/>
