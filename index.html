@@ -143,7 +143,7 @@ function QuickAddForm({pin,onSaved,onCancel,clients}){
   const s=(k,v)=>setF(x=>({...x,[k]:v}));
 
   const submit=async()=>{
-    if(!f.contactName||!f.phone){alert('Όνομα & τηλέφωνο υποχρεωτικά');return;}
+    if(!f.contactName){alert('Όνομα υποχρεωτικό');return;}
     setBusy(true);
     try{
       await call('addLead',pin,f);
