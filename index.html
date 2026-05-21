@@ -17,7 +17,9 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:'Bricolag
 #root{width:100%;min-height:100vh;max-width:520px;margin:0 auto}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:none}}
 .fade{animation:up .18s ease}
+.slideUp{animation:slideUp .25s ease}
 select option{background:#191919;color:#F0F0F0}
 input[type=date]{color-scheme:dark}
 </style>
@@ -29,7 +31,7 @@ input[type=date]{color-scheme:dark}
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
 <script type="text/babel">
-const {useState,useEffect} = React;
+const {useState,useEffect,useMemo,useRef} = React;
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxu6oBabrOrGB6QGCoBg0hpQ8yK7aknfeuy3Li1r5F5ExgkmrCm1af4SuaIZKp6cV7x/exec';
@@ -46,10 +48,27 @@ const LEAD_STATUSES_UI=[
   {key:'Lost',         label:'Χαμένο',        color:'#FF4D4D'},
   {key:'Cold',         label:'Cold',          color:'#6B7280'},
 ];
+const PROSPECT_STATUSES_UI=[
+  {key:'Active',    label:'Ενεργό',    color:'#22C55E'},
+  {key:'Stale',     label:'Stale',     color:'#F59E0B'},
+  {key:'Converted', label:'Converted', color:'#60A5FA'},
+  {key:'Dropped',   label:'Dropped',   color:'#6B7280'},
+];
 const LEAD_SOURCES_UI=['Phone','Referral','Instagram','Website','WalkIn','Other'];
+const PROSPECT_SOURCES_UI=['Google','Instagram','Facebook','TikTok','WalkBy','Referral','Networking','Other'];
+const PROSPECT_ACTIVITY_TYPES_UI=[
+  {key:'Call',    label:'📞 Τηλέφωνο'},
+  {key:'Email',   label:'✉️ Email'},
+  {key:'Message', label:'💬 Μήνυμα'},
+  {key:'Meeting', label:'🤝 Συνάντηση'},
+  {key:'Note',    label:'📝 Σημείωση'},
+];
+const PROSPECT_DROP_REASONS_UI={NoInterest:'Δεν ενδιαφέρθηκε',NotReachable:'Δεν είναι προσβάσιμος',WrongFit:'Δεν ταιριάζει',Competitor:'Επέλεξε άλλον',Other:'Άλλο'};
 const LOST_REASONS_UI={Price:'Τιμή',Timing:'Χρονοδιάγραμμα',CompetitorChose:'Επέλεξε άλλον',NoResponse:'Χωρίς ανταπόκριση',Other:'Άλλο'};
 const LEAD_EVENT_TYPES_UI=['Wedding','DJ','Παιδικό Party','Corporate','Live','Σχολικό','Παραγωγή/Κάλυψη','Installation','DryHire','Other'];
 const AMAZE_EV_TYPES=['Wedding','DJ','Παιδικό Party'];
+const BUDGET_RANGES=['< 2.000€','2.000€ — 5.000€','5.000€ — 10.000€','> 10.000€'];
+
 const detectBrand=et=>AMAZE_EV_TYPES.includes(et||'')?'AMAZE':'NDT';
 const brandColor=et=>AMAZE_EV_TYPES.includes(et||'')?'#A78BFA':'#FF6A00';
 
@@ -57,6 +76,31 @@ const fmtDate=d=>d?new Date(d+'T12:00:00').toLocaleDateString('el-GR',{day:'2-di
 const daysSince=(iso)=>{if(!iso)return null;const d=new Date(iso);if(isNaN(d.getTime()))return null;return Math.floor((Date.now()-d.getTime())/(1000*60*60*24));};
 const fmtDays=(n)=>n===null?'—':n===0?'σήμερα':n===1?'1μ':n+'μ';
 const leadStatusInfo=(s)=>LEAD_STATUSES_UI.find(x=>x.key===s)||{key:s,label:s,color:'#6B7280'};
+const prospectStatusInfo=(s)=>PROSPECT_STATUSES_UI.find(x=>x.key===s)||{key:s,label:s,color:'#6B7280'};
+
+// Initials from full name: "Κωνσταντίνος Ντερνούνι" → "ΚΝ"
+const initialsOf=(name)=>{
+  if(!name)return '?';
+  const parts=String(name).trim().split(/\s+/).filter(Boolean);
+  if(!parts.length)return '?';
+  if(parts.length===1)return parts[0].slice(0,2).toUpperCase();
+  return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
+};
+// Stable color from collabId (simple hash → hue)
+const colorForOwner=(collabId)=>{
+  if(!collabId)return C.mu;
+  if(collabId==='PM'||collabId==='AM')return C.ac;
+  let h=0; for(let i=0;i<collabId.length;i++) h=(h*31+collabId.charCodeAt(i))&0xffffffff;
+  const hue=Math.abs(h)%360;
+  return `hsl(${hue}, 55%, 55%)`;
+};
+
+// Parse activity log line: "[2025-05-21 14:30 · Όνομα · Call] note text"
+const parseLogLine=(line)=>{
+  const m=line.match(/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) · ([^·\]]+?)(?:\s·\s([^\]]+))?\]\s*(.*)$/);
+  if(!m)return {ts:'',author:'',type:'',text:line};
+  return {ts:m[1],author:m[2].trim(),type:(m[3]||'').trim(),text:m[4].trim()};
+};
 
 // ─── API ──────────────────────────────────────────────────────────────────
 const call = (fn, ...args) => {
@@ -70,12 +114,62 @@ const call = (fn, ...args) => {
 // ─── SHARED UI ────────────────────────────────────────────────────────────
 const Mono=({c,s,style:st,children})=><div style={{fontFamily:"'DM Mono',monospace",fontSize:s?10:13,letterSpacing:s?2:0,color:c||'inherit',...st}}>{children}</div>;
 const Card=({children,style:st,onClick})=><div onClick={onClick} style={{background:C.s1,border:`1px solid ${C.br}`,borderRadius:12,padding:'14px 16px',cursor:onClick?'pointer':undefined,...st}}>{children}</div>;
-const Btn=({children,onClick,disabled,accent,danger,full,style:st})=><button onClick={onClick} disabled={disabled} style={{background:accent?C.ac:danger?'transparent':C.s2,color:accent?'#000':danger?C.er:(disabled?C.mu:C.tx),border:`1px solid ${accent?C.ac:danger?C.er:C.br}`,borderRadius:10,padding:'11px 16px',fontSize:13,fontWeight:600,fontFamily:"'Bricolage Grotesque',sans-serif",cursor:disabled?'not-allowed':'pointer',width:full?'100%':undefined,...st}}>{children}</button>;
+const Btn=({children,onClick,disabled,accent,danger,full,style:st})=><button onClick={onClick} disabled={disabled} style={{background:accent?C.ac:danger?'transparent':C.s2,color:accent?'#000':danger?C.er:(disabled?C.mu:C.tx),border:`1px solid ${accent?C.ac:danger?C.er:C.br}`,borderRadius:10,padding:'11px 16px',fontSize:13,fontWeight:600,fontFamily:"'Bricolage Grotesque',sans-serif",cursor:disabled?'not-allowed':'pointer',width:full?'100%':undefined,opacity:disabled?0.5:1,...st}}>{children}</button>;
 const BackBtn=({onClick})=><button onClick={onClick} style={{background:C.s2,border:`1px solid ${C.br}`,color:C.tx,borderRadius:8,width:36,height:36,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0,fontSize:16}}>←</button>;
 const Spin=()=><div style={{display:'inline-block',width:22,height:22,border:`3px solid ${C.br}`,borderTopColor:C.ac,borderRadius:'50%',animation:'spin .7s linear infinite'}}/>;
 const Empty=({text})=><div style={{textAlign:'center',color:C.mu,padding:'50px 0',fontFamily:"'DM Mono',monospace",fontSize:13}}>{text||'Κανένα'}</div>;
 
-// ─── CLIENT DEDUPE HELPERS ──────────────────────────────────────────────
+function Inp({label,value,onChange,type,placeholder,multi,options,required}){
+  const s={width:'100%',background:C.s2,border:`1px solid ${C.br}`,borderRadius:8,padding:'11px 13px',color:C.tx,fontFamily:"'Bricolage Grotesque',sans-serif",fontSize:14,outline:'none'};
+  return(<div>
+    {label&&<Mono s c={C.mu} style={{marginBottom:5,letterSpacing:2}}>{label.toUpperCase()}{required&&<span style={{color:C.ac,marginLeft:4}}>*</span>}</Mono>}
+    {options
+      ?<select value={value} onChange={e=>onChange(e.target.value)} style={s}>{options.map(o=><option key={o.value!==undefined?o.value:o} value={o.value!==undefined?o.value:o}>{o.label!==undefined?o.label:o}</option>)}</select>
+      :multi
+        ?<textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{...s,resize:'vertical',minHeight:72}}/>
+        :<input type={type||'text'} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={s}/>
+    }
+  </div>);
+}
+
+const OwnerBadge=({collabId,name,size=24})=>{
+  const color=colorForOwner(collabId);
+  const initials=initialsOf(name);
+  return <div title={name||'—'} style={{
+    display:'inline-flex',alignItems:'center',justifyContent:'center',
+    width:size,height:size,borderRadius:size/2,
+    background:color+'33',color:color,
+    fontSize:size<28?10:11,fontWeight:700,
+    fontFamily:"'DM Mono',monospace",letterSpacing:0,
+    border:`1px solid ${color}66`,flexShrink:0
+  }}>{initials}</div>;
+};
+
+function LeadStatusBadge({status,small}){
+  const i=leadStatusInfo(status);
+  return <span style={{background:i.color+'22',color:i.color,border:`1px solid ${i.color}44`,borderRadius:6,padding:small?'2px 7px':'3px 9px',fontSize:small?10:11,fontWeight:700,whiteSpace:'nowrap'}}>{i.label}</span>;
+}
+function ProspectStatusBadge({status,small}){
+  const i=prospectStatusInfo(status);
+  return <span style={{background:i.color+'22',color:i.color,border:`1px solid ${i.color}44`,borderRadius:6,padding:small?'2px 7px':'3px 9px',fontSize:small?10:11,fontWeight:700,whiteSpace:'nowrap'}}>{i.label}</span>;
+}
+
+// Hard-block conflict warning shown live in prospect form
+function ConflictBlock({conflict}){
+  if(!conflict)return null;
+  const srcLbl=conflict.source==='prospect'?'prospect':conflict.source==='lead'?'lead':'πελάτη';
+  const matchLbl=conflict.matchedBy==='phone'?'τηλέφωνο':'email';
+  return(<div style={{background:C.er+'22',border:`1px solid ${C.er}66`,borderRadius:10,padding:'12px 14px',display:'flex',gap:10,alignItems:'flex-start'}}>
+    <div style={{fontSize:20,lineHeight:1}}>🚫</div>
+    <div style={{flex:1,fontSize:13,lineHeight:1.4}}>
+      <div style={{color:C.er,fontWeight:700,marginBottom:3}}>Conflict — δεν μπορείς να συνεχίσεις</div>
+      <div style={{color:C.tx}}>Υπάρχει ήδη ως <b>{srcLbl} {conflict.contactCode}</b> του <b>{conflict.ownerName}</b> (ίδιο {matchLbl}).</div>
+      <div style={{color:C.mu,fontSize:12,marginTop:4}}>Επικοινώνησε μαζί του πριν προχωρήσεις.</div>
+    </div>
+  </div>);
+}
+
+// Soft client/lead dedupe (for direct lead creation flow — kept as warning)
 function normPhone(p){return String(p||'').replace(/[\s+\-()]/g,'');}
 function normEmail(e){return String(e||'').trim().toLowerCase();}
 function findClientMatch(phone, email, clients, excludeId){
@@ -105,25 +199,26 @@ function DedupeWarning({phone,email,clients,excludeId,onLink}){
   </div>);
 }
 
-function Inp({label,value,onChange,type,placeholder,multi,options}){
-  const s={width:'100%',background:C.s2,border:`1px solid ${C.br}`,borderRadius:8,padding:'11px 13px',color:C.tx,fontFamily:"'Bricolage Grotesque',sans-serif",fontSize:14,outline:'none'};
-  return(<div>
-    {label&&<Mono s c={C.mu} style={{marginBottom:5,letterSpacing:2}}>{label.toUpperCase()}</Mono>}
-    {options
-      ?<select value={value} onChange={e=>onChange(e.target.value)} style={s}>{options.map(o=><option key={o.value!==undefined?o.value:o} value={o.value!==undefined?o.value:o}>{o.label!==undefined?o.label:o}</option>)}</select>
-      :multi
-        ?<textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{...s,resize:'vertical',minHeight:72}}/>
-        :<input type={type||'text'} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={s}/>
-    }
-  </div>);
-}
+const chipStyle=(color,disabled)=>({
+  background:color+'18',color,
+  border:`1px solid ${color}55`,borderRadius:8,
+  padding:'5px 9px',fontSize:11,fontWeight:600,
+  fontFamily:"'Bricolage Grotesque',sans-serif",
+  cursor:disabled?'wait':'pointer',
+  opacity:disabled?0.5:1
+});
+const FilterChip=({active,onClick,color,children})=>(
+  <button onClick={onClick} style={{
+    background:active?(color||C.ac):C.s2,
+    color:active?'#000':C.tx,
+    border:`1px solid ${active?(color||C.ac):C.br}`,
+    borderRadius:999,padding:'6px 12px',
+    fontSize:12,fontWeight:600,fontFamily:"'Bricolage Grotesque',sans-serif",
+    cursor:'pointer',whiteSpace:'nowrap'
+  }}>{children}</button>
+);
 
-function StatusBadge({status,small}){
-  const i=leadStatusInfo(status);
-  return <span style={{background:i.color+'22',color:i.color,border:`1px solid ${i.color}44`,borderRadius:6,padding:small?'2px 7px':'3px 9px',fontSize:small?10:11,fontWeight:700,whiteSpace:'nowrap'}}>{i.label}</span>;
-}
-
-// ─── LOGIN (PIN-once-saved) ───────────────────────────────────────────────
+// ─── LOGIN ────────────────────────────────────────────────────────────────
 function PinScreen({onAuth}){
   const [pin,setPin]=useState('');
   const [err,setErr]=useState('');
@@ -133,10 +228,9 @@ function PinScreen({onAuth}){
     if(!pin)return;
     setBusy(true);setErr('');
     try{
-      // Auth check: try a lightweight call with this PIN
-      await call('getLeads',pin);
+      const me=await call('whoami',pin);
       localStorage.setItem(PIN_KEY,pin);
-      onAuth(pin);
+      onAuth(pin,me);
     }catch(e){
       setErr(String(e.message||e).includes('Unauthorized')?'Λάθος PIN':String(e.message||'Σφάλμα'));
     }
@@ -145,7 +239,7 @@ function PinScreen({onAuth}){
 
   return(<div style={{minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24}}>
     <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,letterSpacing:4,color:C.ac,marginBottom:8}}>NDT LEADS</div>
-    <div style={{fontSize:14,color:C.mu,marginBottom:32,textAlign:'center'}}>Lite app · Quick entry για leads</div>
+    <div style={{fontSize:14,color:C.mu,marginBottom:32,textAlign:'center'}}>Sales app · Prospects + Pipeline</div>
     <div style={{width:'100%',maxWidth:300}}>
       <Inp label="PIN" value={pin} onChange={setPin} type="password" placeholder="• • • • • •"/>
       {err&&<div style={{color:C.er,fontSize:12,marginTop:8,textAlign:'center'}}>{err}</div>}
@@ -159,20 +253,408 @@ function PinScreen({onAuth}){
   </div>);
 }
 
-// ─── ADD FORM ─────────────────────────────────────────────────────────────
-function QuickAddForm({pin,onSaved,onCancel,clients}){
+// ─── BOTTOM SHEET ─────────────────────────────────────────────────────────
+function BottomSheet({title,onClose,children}){
+  return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:100,display:'flex',alignItems:'flex-end'}} onClick={onClose}>
+    <div onClick={e=>e.stopPropagation()} className="slideUp" style={{background:C.s1,border:`1px solid ${C.br}`,borderTopLeftRadius:16,borderTopRightRadius:16,padding:'20px 22px 28px',width:'100%',maxHeight:'92vh',overflowY:'auto'}}>
+      <div style={{width:40,height:4,background:C.br,borderRadius:2,margin:'0 auto 14px'}}/>
+      {title&&<h3 style={{fontSize:18,fontWeight:800,marginBottom:14}}>{title}</h3>}
+      {children}
+    </div>
+  </div>);
+}
+
+// ─── PROSPECTS: ADD FORM ──────────────────────────────────────────────────
+function ProspectAddForm({pin,onSaved,onCancel}){
   const [f,setF]=useState({
-    existingClientId:'',
-    language:'GR',
-    source:'Phone',referredBy:'',
-    contactName:'',phone:'',email:'',
-    eventType:'Wedding',eventDate:'',venue:'',estimatedValue:'',
-    notes:''
+    companyName:'',contactName:'',phone:'',email:'',
+    source:'Google',eventTypeGuess:'',estimatedValueGuess:'',
+    notes:'',
+    firstActionType:'Call',firstActionDate:new Date().toISOString().slice(0,10),firstActionNote:''
+  });
+  const [busy,setBusy]=useState(false);
+  const [conflict,setConflict]=useState(null);
+  const [checking,setChecking]=useState(false);
+  const debounceRef=useRef(null);
+  const s=(k,v)=>setF(x=>({...x,[k]:v}));
+
+  // Debounced live conflict check on phone/email change
+  useEffect(()=>{
+    if(debounceRef.current)clearTimeout(debounceRef.current);
+    const phN=normPhone(f.phone); const emN=normEmail(f.email);
+    if(phN.length<8 && !emN.includes('@')){setConflict(null);return;}
+    setChecking(true);
+    debounceRef.current=setTimeout(async()=>{
+      try{
+        const c=await call('checkProspectDuplicate',pin,f.phone,f.email);
+        setConflict(c||null);
+      }catch(e){setConflict(null);}
+      setChecking(false);
+    },600);
+    return()=>{if(debounceRef.current)clearTimeout(debounceRef.current);};
+  },[f.phone,f.email]);
+
+  const submit=async()=>{
+    if(!f.contactName&&!f.companyName){alert('Όνομα ή εταιρεία υποχρεωτικό');return;}
+    if(!f.firstActionType||!f.firstActionNote.trim()){alert('Η πρώτη ενέργεια απαιτεί τύπο και σημείωση');return;}
+    if(conflict){alert('Δεν μπορείς να συνεχίσεις — υπάρχει conflict');return;}
+    setBusy(true);
+    try{
+      await call('addProspect',pin,f);
+      onSaved();
+    }catch(e){
+      alert('❌ '+e.message);
+      setBusy(false);
+    }
+  };
+
+  const blocked = !!conflict;
+
+  return(<div className="fade" style={{padding:'18px 20px 90px'}}>
+    <div style={{display:'flex',gap:12,alignItems:'center',marginBottom:14}}>
+      <BackBtn onClick={onCancel}/>
+      <h2 style={{fontSize:22,fontWeight:800}}>Νέο Prospect</h2>
+    </div>
+
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <Mono s c={C.mu} style={{letterSpacing:2}}>ΣΤΟΙΧΕΙΑ ΕΠΑΦΗΣ</Mono>
+      <Inp label="Εταιρεία / Venue" value={f.companyName} onChange={v=>s('companyName',v)} placeholder="π.χ. Hotel Nikopolis"/>
+      <Inp label="Όνομα επαφής" value={f.contactName} onChange={v=>s('contactName',v)} placeholder="π.χ. Νίκος Παπαδόπουλος"/>
+      <div style={{fontSize:11,color:C.mu,marginTop:-6}}>Τουλάχιστον ένα από τα δύο υποχρεωτικό</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        <Inp label="Τηλέφωνο" value={f.phone} onChange={v=>s('phone',v)}/>
+        <Inp label="Email" value={f.email} onChange={v=>s('email',v)} type="email"/>
+      </div>
+      {checking&&<Mono s c={C.mu} style={{marginTop:-4}}>Ελέγχω για conflict...</Mono>}
+      <ConflictBlock conflict={conflict}/>
+
+      <div style={{height:1,background:C.br,margin:'4px 0'}}/>
+      <Mono s c={C.mu} style={{letterSpacing:2}}>ΠΛΗΡΟΦΟΡΙΕΣ</Mono>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        <Inp label="Πηγή" value={f.source} onChange={v=>s('source',v)} options={PROSPECT_SOURCES_UI}/>
+        <Inp label="Τύπος event (εκτίμηση)" value={f.eventTypeGuess} onChange={v=>s('eventTypeGuess',v)} options={['',...LEAD_EVENT_TYPES_UI]}/>
+      </div>
+      <Inp label="Εκτίμηση budget" value={f.estimatedValueGuess} onChange={v=>s('estimatedValueGuess',v)} options={['',...BUDGET_RANGES]}/>
+      <Inp label="Σημειώσεις" value={f.notes} onChange={v=>s('notes',v)} multi placeholder="Τι ξέρεις γι' αυτόν, γιατί τον επέλεξες..."/>
+
+      <div style={{height:1,background:C.br,margin:'4px 0'}}/>
+      <Mono s c={C.mu} style={{letterSpacing:2}}>ΠΡΩΤΗ ΕΝΕΡΓΕΙΑ *</Mono>
+      <div style={{fontSize:11,color:C.mu,marginTop:-8}}>Δεν μπορείς να καταχωρήσεις prospect χωρίς να κάνεις πρώτη επαφή.</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        <Inp label="Τύπος" value={f.firstActionType} onChange={v=>s('firstActionType',v)} options={PROSPECT_ACTIVITY_TYPES_UI.map(t=>({value:t.key,label:t.label}))} required/>
+        <Inp label="Ημερομηνία" value={f.firstActionDate} onChange={v=>s('firstActionDate',v)} type="date"/>
+      </div>
+      <Inp label="Τι έγινε" value={f.firstActionNote} onChange={v=>s('firstActionNote',v)} multi placeholder="π.χ. Κάλεσα στο γραφείο, δεν απάντησε. Άφησα μήνυμα."/>
+
+      <Btn accent full onClick={submit} disabled={busy||blocked} style={{padding:'14px',fontSize:15,fontWeight:800,marginTop:10}}>
+        {busy?<Spin/>:blocked?'🚫 Υπάρχει conflict':'+ Καταχώρηση'}
+      </Btn>
+    </div>
+  </div>);
+}
+// ─── PROSPECT: CONVERT MODAL ──────────────────────────────────────────────
+function ConvertModal({prospect,pin,onConverted,onCancel}){
+  const [f,setF]=useState({
+    eventType:'Wedding',eventDate:'',venue:prospect.CompanyName||'',
+    estimatedValue:'',attendees:'',verbatim:'',language:'GR'
   });
   const [busy,setBusy]=useState(false);
   const s=(k,v)=>setF(x=>({...x,[k]:v}));
 
-  // Auto-fill from selected existing client
+  const submit=async()=>{
+    if(!f.eventType||!f.eventDate||!f.venue||!f.estimatedValue||!f.verbatim.trim()){
+      alert('Όλα τα πεδία με * είναι υποχρεωτικά');return;
+    }
+    setBusy(true);
+    try{
+      const r=await call('convertProspectToLead',pin,prospect.ProspectID,f);
+      onConverted(r);
+    }catch(e){alert('❌ '+e.message);setBusy(false);}
+  };
+
+  return(<BottomSheet title="Μετατροπή σε Lead" onClose={busy?undefined:onCancel}>
+    <Mono s c={C.mu} style={{marginBottom:12}}>
+      Επαφή: <b style={{color:C.tx}}>{prospect.ContactName||prospect.CompanyName}</b> · {prospect.ContactCode}
+    </Mono>
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        <Inp label="Τύπος event" value={f.eventType} onChange={v=>s('eventType',v)} options={LEAD_EVENT_TYPES_UI} required/>
+        <Inp label="Ημερομηνία" value={f.eventDate} onChange={v=>s('eventDate',v)} type="date" required/>
+      </div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div style={{fontSize:11,color:brandColor(f.eventType),fontFamily:"'DM Mono',monospace",letterSpacing:1}}>→ {detectBrand(f.eventType)==='AMAZE'?'AMAZE DJs':'NDT Event Production'}</div>
+        <div style={{display:'flex',gap:4}}>{['GR','EN'].map(l=><button key={l} onClick={()=>s('language',l)} style={{padding:'2px 8px',borderRadius:5,border:`1px solid ${C.br}`,background:f.language===l?C.ac:C.s2,color:f.language===l?'#000':C.tx,fontWeight:700,fontSize:11,cursor:'pointer'}}>{l}</button>)}</div>
+      </div>
+      <Inp label="Χώρος" value={f.venue} onChange={v=>s('venue',v)} required/>
+      <Inp label="Εκτίμηση budget" value={f.estimatedValue} onChange={v=>s('estimatedValue',v)} options={['',...BUDGET_RANGES]} required/>
+      <Inp label="Παρευρισκόμενοι (προαιρετικό)" value={f.attendees} onChange={v=>s('attendees',v)} placeholder="π.χ. 150"/>
+      <Inp label="Τι είπε ο πελάτης" value={f.verbatim} onChange={v=>s('verbatim',v)} multi required placeholder="Αυτούσιες οι λέξεις του πελάτη — τι ζήτησε, τι ανάφερε ως προτίμηση..."/>
+      <div style={{fontSize:11,color:C.inf,marginTop:-4,lineHeight:1.4}}>
+        ℹ Με τη μετατροπή, ενημερώνεται αυτόματα το γραφείο για να ξεκινήσει η προσφορά. Το lead παραμένει στο pipeline σου.
+      </div>
+      <div style={{display:'flex',gap:8,marginTop:6}}>
+        <Btn onClick={onCancel} disabled={busy} style={{flex:1}}>Άκυρο</Btn>
+        <Btn accent onClick={submit} disabled={busy} style={{flex:2}}>{busy?<Spin/>:'✓ Μετατροπή σε Lead'}</Btn>
+      </div>
+    </div>
+  </BottomSheet>);
+}
+
+// ─── PROSPECT: DROP MODAL ─────────────────────────────────────────────────
+function DropProspectModal({prospect,pin,onDropped,onCancel}){
+  const [reason,setReason]=useState('NoInterest');
+  const [note,setNote]=useState('');
+  const [busy,setBusy]=useState(false);
+
+  const submit=async()=>{
+    if(!confirm('Σίγουρα; Το prospect θα μαρκαριστεί ως Dropped.'))return;
+    setBusy(true);
+    try{
+      await call('dropProspect',pin,prospect.ProspectID,reason,note);
+      onDropped();
+    }catch(e){alert('❌ '+e.message);setBusy(false);}
+  };
+
+  return(<BottomSheet title="Drop prospect" onClose={busy?undefined:onCancel}>
+    <Inp label="Λόγος" value={reason} onChange={setReason} options={Object.entries(PROSPECT_DROP_REASONS_UI).map(([value,label])=>({value,label}))}/>
+    <div style={{height:10}}/>
+    <Inp label="Σχόλιο (προαιρετικό)" value={note} onChange={setNote} multi/>
+    <div style={{display:'flex',gap:8,marginTop:14}}>
+      <Btn onClick={onCancel} disabled={busy} style={{flex:1}}>Άκυρο</Btn>
+      <Btn danger onClick={submit} disabled={busy} style={{flex:1}}>{busy?<Spin/>:'Drop'}</Btn>
+    </div>
+  </BottomSheet>);
+}
+
+// ─── PROSPECT: DETAIL VIEW ────────────────────────────────────────────────
+function ProspectDetailView({prospect,pin,me,onBack,onChanged}){
+  const [showConvert,setShowConvert]=useState(false);
+  const [showDrop,setShowDrop]=useState(false);
+  const [activityType,setActivityType]=useState('Call');
+  const [activityNote,setActivityNote]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [toast,setToast]=useState('');
+
+  const isOwner = prospect.OwnerCollabID === me.collabId;
+  const canAct = isOwner || me.isPM;
+  const isFinal = prospect.Status==='Converted' || prospect.Status==='Dropped';
+
+  const flash=(m)=>{setToast(m);setTimeout(()=>setToast(''),2500);};
+
+  const submitActivity=async()=>{
+    if(!activityNote.trim()){alert('Γράψε τι έγινε');return;}
+    setBusy(true);
+    try{
+      await call('addProspectActivity',pin,prospect.ProspectID,activityType,activityNote.trim());
+      setActivityNote('');
+      flash('✅ Καταχωρήθηκε');
+      onChanged();
+    }catch(e){alert('❌ '+e.message);}
+    setBusy(false);
+  };
+
+  // Parse activity log
+  const entries = useMemo(()=>{
+    const log = String(prospect.ActivityLog||'');
+    if(!log)return [];
+    return log.split('\n').filter(Boolean).map(parseLogLine).reverse();
+  },[prospect.ActivityLog]);
+
+  return(<div className="fade" style={{padding:'18px 20px 90px'}}>
+    <div style={{display:'flex',gap:12,alignItems:'center',marginBottom:14}}>
+      <BackBtn onClick={onBack}/>
+      <div style={{flex:1,minWidth:0}}>
+        <h2 style={{fontSize:20,fontWeight:800,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{prospect.ContactName||prospect.CompanyName||'—'}</h2>
+        <Mono s c={C.mu} style={{letterSpacing:1.5,marginTop:2}}>{prospect.ContactCode} · {String(prospect.CreatedDate||'').slice(0,10)}</Mono>
+      </div>
+      <OwnerBadge collabId={prospect.OwnerCollabID} name={prospect.OwnerName} size={32}/>
+    </div>
+
+    {toast&&<div style={{background:C.s2,border:`1px solid ${C.br}`,borderRadius:8,padding:'10px 14px',marginBottom:12,fontSize:13,textAlign:'center'}}>{toast}</div>}
+
+    {!isOwner&&!me.isPM&&<div style={{background:C.inf+'18',border:`1px solid ${C.inf}55`,borderRadius:8,padding:'10px 12px',marginBottom:14,fontSize:12,color:C.inf}}>
+      👁 Read-only · ανήκει στον/στην <b>{prospect.OwnerName}</b>
+    </div>}
+
+    <Card style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+        <ProspectStatusBadge status={prospect.Status}/>
+        {prospect.OwnerName&&<Mono s c={C.mu}>Owner: {prospect.OwnerName}</Mono>}
+      </div>
+      {prospect.CompanyName&&<div style={{marginBottom:6,fontSize:13}}><span style={{color:C.mu}}>Εταιρεία: </span>{prospect.CompanyName}</div>}
+      {canAct&&prospect.Phone&&<div style={{marginBottom:6,fontSize:13}}><span style={{color:C.mu}}>Τηλ: </span><a href={'tel:'+prospect.Phone} style={{color:C.ac,textDecoration:'none'}}>{prospect.Phone}</a></div>}
+      {canAct&&prospect.Email&&<div style={{marginBottom:6,fontSize:13}}><span style={{color:C.mu}}>Email: </span><a href={'mailto:'+prospect.Email} style={{color:C.ac,textDecoration:'none'}}>{prospect.Email}</a></div>}
+      <div style={{marginBottom:6,fontSize:13}}><span style={{color:C.mu}}>Πηγή: </span>{prospect.Source||'—'}</div>
+      {prospect.EventTypeGuess&&<div style={{marginBottom:6,fontSize:13}}><span style={{color:C.mu}}>Τύπος event (εκτίμηση): </span>{prospect.EventTypeGuess}</div>}
+      {prospect.EstimatedValueGuess&&<div style={{marginBottom:6,fontSize:13}}><span style={{color:C.mu}}>Budget: </span>{prospect.EstimatedValueGuess}</div>}
+      {prospect.Notes&&<div style={{marginTop:8,padding:'8px 10px',background:C.s2,borderRadius:6,fontSize:12,color:C.tx,lineHeight:1.4}}>{prospect.Notes}</div>}
+      {prospect.Status==='Converted'&&prospect.ConvertedLeadID&&<div style={{marginTop:8,fontSize:12,color:C.inf}}>✓ Μετατράπηκε σε lead</div>}
+      {prospect.Status==='Dropped'&&prospect.DropReason&&<div style={{marginTop:8,fontSize:12,color:C.mu}}>Λόγος drop: {PROSPECT_DROP_REASONS_UI[prospect.DropReason]||prospect.DropReason}</div>}
+    </Card>
+
+    {canAct&&!isFinal&&<Card style={{marginBottom:12}}>
+      <Mono s c={C.mu} style={{marginBottom:8,letterSpacing:2}}>ΝΕΑ ΕΝΕΡΓΕΙΑ</Mono>
+      <div style={{display:'grid',gridTemplateColumns:'1fr',gap:8}}>
+        <Inp label="" value={activityType} onChange={setActivityType} options={PROSPECT_ACTIVITY_TYPES_UI.map(t=>({value:t.key,label:t.label}))}/>
+        <Inp label="" value={activityNote} onChange={setActivityNote} multi placeholder="Τι έγινε; π.χ. Κάλεσα, ζήτησε να ξανατηλεφωνήσω την Πέμπτη"/>
+        <Btn accent full onClick={submitActivity} disabled={busy||!activityNote.trim()}>{busy?<Spin/>:'+ Καταχώρηση'}</Btn>
+      </div>
+      {prospect.Status==='Stale'&&<div style={{marginTop:8,fontSize:11,color:C.wa}}>💡 Είναι stale — με την καταχώρηση activity θα γίνει ξανά Active</div>}
+    </Card>}
+
+    <Mono s c={C.mu} style={{marginBottom:8,letterSpacing:2}}>ΙΣΤΟΡΙΚΟ ΕΠΑΦΩΝ</Mono>
+    {entries.length===0
+      ? <Empty text="Καμία ενέργεια"/>
+      : <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:12}}>
+          {entries.map((e,i)=>(<div key={i} style={{background:C.s1,border:`1px solid ${C.br}`,borderRadius:10,padding:'10px 12px'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+              <Mono s c={C.ac} style={{letterSpacing:1.5}}>{e.type||'—'}</Mono>
+              <Mono s c={C.mu}>{e.ts}</Mono>
+            </div>
+            <div style={{fontSize:13,color:C.tx,lineHeight:1.45,whiteSpace:'pre-wrap'}}>{e.text}</div>
+            <Mono s c={C.mu} style={{marginTop:4,fontSize:10}}>— {e.author}</Mono>
+          </div>))}
+        </div>
+    }
+
+    {canAct&&!isFinal&&<div style={{display:'flex',gap:8,marginTop:14,position:'sticky',bottom:14,paddingTop:8}}>
+      <Btn danger onClick={()=>setShowDrop(true)} style={{flex:1}}>Drop</Btn>
+      <Btn accent onClick={()=>setShowConvert(true)} style={{flex:2}}>✓ Convert to Lead</Btn>
+    </div>}
+
+    {showConvert&&<ConvertModal prospect={prospect} pin={pin}
+      onConverted={(r)=>{setShowConvert(false);onChanged();flash('✅ Lead '+r.contactCode+' δημιουργήθηκε');setTimeout(onBack,1500);}}
+      onCancel={()=>setShowConvert(false)}/>}
+    {showDrop&&<DropProspectModal prospect={prospect} pin={pin}
+      onDropped={()=>{setShowDrop(false);onChanged();flash('✅ Dropped');setTimeout(onBack,1200);}}
+      onCancel={()=>setShowDrop(false)}/>}
+  </div>);
+}
+
+// ─── PROSPECTS: LIST VIEW ─────────────────────────────────────────────────
+function ProspectsView({pin,me,onAdd,onOpen,refreshKey}){
+  const [prospects,setProspects]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [filter,setFilter]=useState('mine'); // mine | all | stale | converted | dropped
+  const [search,setSearch]=useState('');
+  const [toast,setToast]=useState('');
+
+  const load=async()=>{
+    setLoading(true);
+    try{const data=await call('getProspects',pin);setProspects(data||[]);}
+    catch(e){
+      if(String(e.message).includes('Unauthorized')){
+        localStorage.removeItem(PIN_KEY);location.reload();return;
+      }
+      setToast('❌ '+e.message);
+    }
+    setLoading(false);
+  };
+  useEffect(()=>{load();},[refreshKey]);
+
+  const filtered=useMemo(()=>{
+    let arr=(prospects||[]).slice();
+    if(filter==='mine')         arr=arr.filter(p=>p.OwnerCollabID===me.collabId&&['Active','Stale'].includes(p.Status));
+    else if(filter==='all')     arr=arr.filter(p=>['Active','Stale'].includes(p.Status));
+    else if(filter==='stale')   arr=arr.filter(p=>p.Status==='Stale');
+    else if(filter==='converted') arr=arr.filter(p=>p.Status==='Converted');
+    else if(filter==='dropped') arr=arr.filter(p=>p.Status==='Dropped');
+    if(search){
+      const q=search.toLowerCase();
+      arr=arr.filter(p=>
+        String(p.ContactName||'').toLowerCase().includes(q)||
+        String(p.CompanyName||'').toLowerCase().includes(q)||
+        String(p.Phone||'').includes(q)||
+        String(p.Email||'').toLowerCase().includes(q)||
+        String(p.ContactCode||'').toLowerCase().includes(q)
+      );
+    }
+    arr.sort((a,b)=>String(b.LastActivityDate||b.CreatedDate||'').localeCompare(String(a.LastActivityDate||a.CreatedDate||'')));
+    return arr;
+  },[prospects,filter,search,me.collabId]);
+
+  const counts={
+    mine:      prospects.filter(p=>p.OwnerCollabID===me.collabId&&['Active','Stale'].includes(p.Status)).length,
+    all:       prospects.filter(p=>['Active','Stale'].includes(p.Status)).length,
+    stale:     prospects.filter(p=>p.Status==='Stale').length,
+    converted: prospects.filter(p=>p.Status==='Converted').length,
+    dropped:   prospects.filter(p=>p.Status==='Dropped').length,
+  };
+
+  return(<div className="fade" style={{padding:'0 20px 90px'}}>
+    {toast&&<div style={{background:C.s2,border:`1px solid ${C.br}`,borderRadius:8,padding:'10px 14px',marginBottom:12,fontSize:13,textAlign:'center'}}>{toast}</div>}
+
+    <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 όνομα · εταιρεία · τηλέφωνο · code"
+      style={{width:'100%',background:C.s2,border:`1px solid ${C.br}`,borderRadius:10,padding:'12px 14px',color:C.tx,fontFamily:"'Bricolage Grotesque',sans-serif",fontSize:14,outline:'none',marginBottom:12}}/>
+
+    <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:8,marginBottom:14}}>
+      <FilterChip active={filter==='mine'}      onClick={()=>setFilter('mine')}>Δικά μου · {counts.mine}</FilterChip>
+      <FilterChip active={filter==='all'}       onClick={()=>setFilter('all')}>Όλων · {counts.all}</FilterChip>
+      <FilterChip active={filter==='stale'}     onClick={()=>setFilter('stale')} color={prospectStatusInfo('Stale').color}>Stale · {counts.stale}</FilterChip>
+      <FilterChip active={filter==='converted'} onClick={()=>setFilter('converted')} color={prospectStatusInfo('Converted').color}>Converted · {counts.converted}</FilterChip>
+      <FilterChip active={filter==='dropped'}   onClick={()=>setFilter('dropped')} color={prospectStatusInfo('Dropped').color}>Dropped · {counts.dropped}</FilterChip>
+    </div>
+
+    {loading
+      ? <div style={{padding:40,textAlign:'center'}}><Spin/></div>
+      : filtered.length===0
+        ? <Empty text="Κανένα prospect"/>
+        : <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {filtered.map(p=>{
+              const lastDays=daysSince(p.LastActivityDate||p.CreatedDate);
+              const isMine=p.OwnerCollabID===me.collabId;
+              const lastEntry=String(p.ActivityLog||'').split('\n').filter(Boolean).pop();
+              const lastParsed=lastEntry?parseLogLine(lastEntry):null;
+              return(<Card key={p.ProspectID} onClick={()=>onOpen(p.ProspectID)}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,marginBottom:6}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:15,fontWeight:700,marginBottom:3,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                      {p.ContactName||p.CompanyName||'—'}
+                    </div>
+                    <Mono s c={C.mu} style={{letterSpacing:1.5}}>
+                      {p.ContactCode}
+                      {p.CompanyName&&p.ContactName?' · '+p.CompanyName:''}
+                      {p.Source?' · '+p.Source:''}
+                    </Mono>
+                  </div>
+                  <OwnerBadge collabId={p.OwnerCollabID} name={p.OwnerName}/>
+                </div>
+                {lastParsed&&<Mono s c={C.mu} style={{marginBottom:6,fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:11}}>
+                  💬 [{lastParsed.type}] {lastParsed.text}
+                </Mono>}
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+                  <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                    <ProspectStatusBadge status={p.Status} small/>
+                    {!isMine&&<Mono s c={C.mu} style={{fontSize:10}}>{p.OwnerName}</Mono>}
+                  </div>
+                  <Mono s c={p.Status==='Stale'?C.wa:C.mu}>{p.Status==='Stale'?'⚠ ':''}{fmtDays(lastDays)}</Mono>
+                </div>
+              </Card>);
+            })}
+          </div>
+    }
+
+    <button onClick={onAdd} style={{
+      position:'fixed',bottom:24,right:24,
+      width:60,height:60,borderRadius:30,
+      background:C.ac,color:'#000',border:'none',
+      fontSize:32,fontWeight:800,cursor:'pointer',
+      boxShadow:'0 4px 20px rgba(255,106,0,0.4)',
+      display:'flex',alignItems:'center',justifyContent:'center',
+      lineHeight:1,paddingBottom:4,zIndex:50
+    }}>+</button>
+  </div>);
+}
+// ─── PIPELINE: QUICK ADD LEAD (direct lead, no prospect stage) ────────────
+function QuickAddForm({pin,onSaved,onCancel,clients}){
+  const [f,setF]=useState({
+    existingClientId:'',language:'GR',source:'Phone',referredBy:'',
+    contactName:'',phone:'',email:'',
+    eventType:'Wedding',eventDate:'',venue:'',estimatedValue:'',notes:''
+  });
+  const [busy,setBusy]=useState(false);
+  const s=(k,v)=>setF(x=>({...x,[k]:v}));
+
   const handleClientSelect=(clientId)=>{
     if(!clientId){s('existingClientId','');return;}
     const cl=(clients||[]).find(c=>c.ClientID===clientId);
@@ -181,17 +663,18 @@ function QuickAddForm({pin,onSaved,onCancel,clients}){
       contactName:x.contactName||cl.Name||'',
       phone:x.phone||cl.Phone||'',
       email:x.email||cl.Email||'',
-      language:cl.Language||x.language||'GR',
+      language:cl.Language||x.language||'GR'
     }));
   };
 
   const submit=async()=>{
     if(!f.contactName){alert('Όνομα υποχρεωτικό');return;}
+    if(!f.eventType||!f.eventDate||!f.venue||!f.estimatedValue){
+      alert('Τύπος event, ημερομηνία, χώρος και budget είναι υποχρεωτικά');return;
+    }
     setBusy(true);
-    try{
-      await call('addLead',pin,f);
-      onSaved();
-    }catch(e){alert('❌ '+e.message);setBusy(false);}
+    try{await call('addLead',pin,f);onSaved();}
+    catch(e){alert('❌ '+e.message);setBusy(false);}
   };
 
   return(<div className="fade" style={{padding:'18px 20px 90px'}}>
@@ -199,112 +682,145 @@ function QuickAddForm({pin,onSaved,onCancel,clients}){
       <BackBtn onClick={onCancel}/>
       <h2 style={{fontSize:22,fontWeight:800}}>Νέο Lead</h2>
     </div>
-
+    <div style={{background:C.inf+'18',border:`1px solid ${C.inf}55`,borderRadius:8,padding:'10px 12px',marginBottom:12,fontSize:12,color:C.inf,lineHeight:1.4}}>
+      ℹ Direct lead — χρησιμοποίησε αυτή τη φόρμα όταν ο πελάτης έρχεται με αίτημα έτοιμο (inbound/referral). Για cold outreach, ξεκίνα από Prospects.
+    </div>
     <div style={{display:'flex',flexDirection:'column',gap:12}}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
         <Inp label="Πηγή" value={f.source} onChange={v=>s('source',v)} options={LEAD_SOURCES_UI}/>
         <Inp label="Από ποιον" value={f.referredBy} onChange={v=>s('referredBy',v)}/>
       </div>
-      <Inp label="Όνομα *" value={f.contactName} onChange={v=>s('contactName',v)}/>
+      <Inp label="Όνομα" value={f.contactName} onChange={v=>s('contactName',v)} required/>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
         <Inp label="Τηλέφωνο" value={f.phone} onChange={v=>s('phone',v)}/>
         <Inp label="Email" value={f.email} onChange={v=>s('email',v)} type="email"/>
       </div>
-      {/* Live dedupe warning while typing */}
       <DedupeWarning phone={f.phone} email={f.email} clients={clients}
-        excludeId={f.existingClientId}
-        onLink={(c)=>handleClientSelect(c.ClientID)}/>
-      <div style={{height:1,background:C.br,margin:'4px 0'}}/>
+        excludeId={f.existingClientId} onLink={(c)=>handleClientSelect(c.ClientID)}/>
       {clients&&clients.length>0&&(
         <select value={f.existingClientId} onChange={e=>handleClientSelect(e.target.value)}
-          style={{width:'100%',background:C.s2,border:`1px solid ${C.br}`,borderRadius:8,padding:'9px 10px',color:f.existingClientId?C.tx:C.mu,fontSize:13,marginBottom:4}}>
+          style={{width:'100%',background:C.s2,border:`1px solid ${C.br}`,borderRadius:8,padding:'9px 10px',color:f.existingClientId?C.tx:C.mu,fontSize:13}}>
           <option value=''>— Νέος πελάτης (αυτόματη δημιουργία) —</option>
           {clients.map(c=><option key={c.ClientID} value={c.ClientID}>{c.Name} ({c.ContactCode})</option>)}
         </select>
       )}
+      <div style={{height:1,background:C.br,margin:'4px 0'}}/>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-        <Inp label="Τύπος event" value={f.eventType} onChange={v=>s('eventType',v)} options={LEAD_EVENT_TYPES_UI}/>
-        <Inp label="Ημερομηνία" value={f.eventDate} onChange={v=>s('eventDate',v)} type="date"/>
+        <Inp label="Τύπος event" value={f.eventType} onChange={v=>s('eventType',v)} options={LEAD_EVENT_TYPES_UI} required/>
+        <Inp label="Ημερομηνία" value={f.eventDate} onChange={v=>s('eventDate',v)} type="date" required/>
       </div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:-4}}>
         <div style={{fontSize:11,color:brandColor(f.eventType),fontFamily:"'DM Mono',monospace",letterSpacing:1}}>→ {detectBrand(f.eventType)==='AMAZE'?'AMAZE DJs':'NDT Event Production'}</div>
         <div style={{display:'flex',gap:4}}>{['GR','EN'].map(l=><button key={l} onClick={()=>s('language',l)} style={{padding:'2px 8px',borderRadius:5,border:`1px solid ${C.br}`,background:f.language===l?C.ac:C.s2,color:f.language===l?'#000':C.tx,fontWeight:700,fontSize:11,cursor:'pointer'}}>{l}</button>)}</div>
       </div>
-      <Inp label="Χώρος" value={f.venue} onChange={v=>s('venue',v)}/>
-      <Inp label="Εκτιμώμενο €" value={f.estimatedValue} onChange={v=>s('estimatedValue',v)} type="number"/>
+      <Inp label="Χώρος" value={f.venue} onChange={v=>s('venue',v)} required/>
+      <Inp label="Εκτιμώμενο €" value={f.estimatedValue} onChange={v=>s('estimatedValue',v)} type="number" required/>
       <Inp label="Σημειώσεις" value={f.notes} onChange={v=>s('notes',v)} multi/>
-
       <Btn accent full onClick={submit} disabled={busy} style={{padding:'14px',fontSize:15,fontWeight:800,marginTop:6}}>{busy?<Spin/>:'+ Καταχώρηση'}</Btn>
     </div>
   </div>);
 }
 
-// ─── LOST REASON SHEET ────────────────────────────────────────────────────
+// ─── PIPELINE: LOST SHEET ─────────────────────────────────────────────────
 function LostSheet({onSubmit,onCancel,busy}){
   const [reason,setReason]=useState('Price');
   const [note,setNote]=useState('');
-  return(
-    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:100,display:'flex',alignItems:'flex-end'}} onClick={onCancel}>
-      <div onClick={e=>e.stopPropagation()} style={{background:C.s1,border:`1px solid ${C.br}`,borderTopLeftRadius:16,borderTopRightRadius:16,padding:'20px 22px 28px',width:'100%'}}>
-        <div style={{width:40,height:4,background:C.br,borderRadius:2,margin:'0 auto 14px'}}/>
-        <h3 style={{fontSize:18,fontWeight:800,marginBottom:14}}>Χάθηκε — λόγος</h3>
-        <Inp label="Λόγος" value={reason} onChange={setReason} options={Object.entries(LOST_REASONS_UI).map(([value,label])=>({value,label}))}/>
-        <div style={{height:10}}/>
-        <Inp label="Σχόλιο (προαιρετικό)" value={note} onChange={setNote} multi/>
-        <div style={{display:'flex',gap:8,marginTop:14}}>
-          <Btn onClick={onCancel} style={{flex:1}}>Άκυρο</Btn>
-          <Btn danger onClick={()=>onSubmit(reason,note)} disabled={busy} style={{flex:1}}>{busy?<Spin/>:'Καταγραφή'}</Btn>
-        </div>
-      </div>
+  return(<BottomSheet title="Χάθηκε — λόγος" onClose={busy?undefined:onCancel}>
+    <Inp label="Λόγος" value={reason} onChange={setReason} options={Object.entries(LOST_REASONS_UI).map(([value,label])=>({value,label}))}/>
+    <div style={{height:10}}/>
+    <Inp label="Σχόλιο (προαιρετικό)" value={note} onChange={setNote} multi/>
+    <div style={{display:'flex',gap:8,marginTop:14}}>
+      <Btn onClick={onCancel} style={{flex:1}}>Άκυρο</Btn>
+      <Btn danger onClick={()=>onSubmit(reason,note)} disabled={busy} style={{flex:1}}>{busy?<Spin/>:'Καταγραφή'}</Btn>
     </div>
-  );
+  </BottomSheet>);
 }
 
-// ─── CONVERT MODAL ────────────────────────────────────────────────────────
-function ListView({pin,onAdd,onLogout}){
+// ─── PIPELINE: LEAD HANDOFF MODAL (PM only) ───────────────────────────────
+function LeadHandoffModal({lead,pin,collabs,onDone,onCancel}){
+  const [collabId,setCollabId]=useState('');
+  const [busy,setBusy]=useState(false);
+  const salesList=(collabs||[]).filter(c=>String(c.IsSales).toLowerCase()==='true'||c.IsSales===true);
+  const currentName=salesList.find(c=>c.CollabID===lead.AssignedTo)?.Name||'—';
+
+  const submit=async()=>{
+    if(!collabId){alert('Επίλεξε νέο ιδιοκτήτη');return;}
+    if(collabId===lead.AssignedTo){alert('Είναι ήδη ο τρέχων ιδιοκτήτης');return;}
+    setBusy(true);
+    try{const r=await call('reassignLead',pin,lead.LeadID,collabId);onDone(r);}
+    catch(e){alert('❌ '+e.message);setBusy(false);}
+  };
+
+  return(<BottomSheet title="Ανάθεση Lead" onClose={busy?undefined:onCancel}>
+    <Mono s c={C.mu} style={{marginBottom:12}}>
+      Lead: <b style={{color:C.tx}}>{lead.ContactName}</b> · {lead.ContactCode}<br/>
+      Τρέχων ιδιοκτήτης: <b style={{color:C.tx}}>{currentName}</b>
+    </Mono>
+    <Inp label="Νέος ιδιοκτήτης" value={collabId} onChange={setCollabId}
+      options={[{value:'',label:'— Επίλεξε πωλητή —'},...salesList.map(c=>({value:c.CollabID,label:c.Name}))]}/>
+    <div style={{fontSize:11,color:C.mu,marginTop:6}}>Θα σταλούν emails στους δύο εμπλεκόμενους πωλητές.</div>
+    <div style={{display:'flex',gap:8,marginTop:14}}>
+      <Btn onClick={onCancel} disabled={busy} style={{flex:1}}>Άκυρο</Btn>
+      <Btn accent onClick={submit} disabled={busy||!collabId} style={{flex:2}}>{busy?<Spin/>:'Ανάθεση'}</Btn>
+    </div>
+  </BottomSheet>);
+}
+
+// ─── PIPELINE VIEW ────────────────────────────────────────────────────────
+function PipelineView({pin,me,onAdd,refreshKey,collabs}){
   const [leads,setLeads]=useState([]);
   const [loading,setLoading]=useState(true);
-  const [filter,setFilter]=useState('active'); // active | all | won | lost | cold
+  const [filter,setFilter]=useState('active');
   const [brandFilter,setBrandFilter]=useState('all');
+  const [ownerFilter,setOwnerFilter]=useState('all'); // PM only
   const [search,setSearch]=useState('');
   const [busyId,setBusyId]=useState(null);
-  const [lostFor,setLostFor]=useState(null);  // lead pending Lost
+  const [lostFor,setLostFor]=useState(null);
   const [noteFor,setNoteFor]=useState(null);
   const [noteText,setNoteText]=useState('');
+  const [handoffFor,setHandoffFor]=useState(null);
   const [toast,setToast]=useState('');
 
   const load=async()=>{
     setLoading(true);
     try{const data=await call('getLeads',pin);setLeads(data||[]);}
     catch(e){
-      if(String(e.message).includes('Unauthorized')){
-        localStorage.removeItem(PIN_KEY);
-        location.reload();
-        return;
-      }
+      if(String(e.message).includes('Unauthorized')){localStorage.removeItem(PIN_KEY);location.reload();return;}
       setToast('❌ '+e.message);
     }
     setLoading(false);
   };
-  useEffect(()=>{load();},[]);
+  useEffect(()=>{load();},[refreshKey]);
   const flash=(m)=>{setToast(m);setTimeout(()=>setToast(''),2500);};
 
-  const filtered=React.useMemo(()=>{
+  const ownerNameOf=(collabId)=>{
+    if(!collabId)return '—';
+    if(collabId==='PM')return 'Γραφείο';
+    const c=(collabs||[]).find(x=>x.CollabID===collabId);
+    return c?c.Name:'?';
+  };
+
+  const filtered=useMemo(()=>{
     let arr=(leads||[]).slice();
     if(brandFilter!=='all')arr=arr.filter(l=>detectBrand(l.EventType)===brandFilter);
     if(filter==='active')arr=arr.filter(l=>['New','Contacted','Proposal_Sent','Negotiating'].includes(l.Status));
     else if(filter==='won')arr=arr.filter(l=>l.Status==='Won');
     else if(filter==='lost')arr=arr.filter(l=>l.Status==='Lost');
     else if(filter==='cold')arr=arr.filter(l=>l.Status==='Cold');
+    if(me.isPM&&ownerFilter!=='all'){
+      if(ownerFilter==='unassigned')arr=arr.filter(l=>!l.AssignedTo||l.AssignedTo==='PM');
+      else arr=arr.filter(l=>l.AssignedTo===ownerFilter);
+    }
     if(search){
       const q=search.toLowerCase();
       arr=arr.filter(l=>String(l.ContactName||'').toLowerCase().includes(q)
         ||String(l.Phone||'').includes(q)
-        ||String(l.Email||'').toLowerCase().includes(q));
+        ||String(l.Email||'').toLowerCase().includes(q)
+        ||String(l.ContactCode||'').toLowerCase().includes(q));
     }
     arr.sort((a,b)=>String(b.LastUpdated||'').localeCompare(String(a.LastUpdated||'')));
     return arr;
-  },[leads,filter,brandFilter,search]);
+  },[leads,filter,brandFilter,ownerFilter,search,me.isPM]);
 
   const counts={
     active:leads.filter(l=>['New','Contacted','Proposal_Sent','Negotiating'].includes(l.Status)).length,
@@ -320,8 +836,7 @@ function ListView({pin,onAdd,onLogout}){
       setBusyId(lead.LeadID);
       try{await call('convertLeadToClient',pin,lead.LeadID,{});await load();flash('✅ Πελάτης και event δημιουργήθηκαν');}
       catch(e){flash('❌ '+e.message);}
-      setBusyId(null);
-      return;
+      setBusyId(null);return;
     }
     if(newStatus==='Lost'){setLostFor(lead);return;}
     if(!confirm(`"${lead.ContactName}" → ${leadStatusInfo(newStatus).label};`))return;
@@ -346,46 +861,36 @@ function ListView({pin,onAdd,onLogout}){
     setBusyId(null);
   };
 
-  const Chip=({active,onClick,color,children})=>(
-    <button onClick={onClick} style={{
-      background:active?(color||C.ac):C.s2,
-      color:active?'#000':C.tx,
-      border:`1px solid ${active?(color||C.ac):C.br}`,
-      borderRadius:999,padding:'6px 12px',
-      fontSize:12,fontWeight:600,fontFamily:"'Bricolage Grotesque',sans-serif",
-      cursor:'pointer',whiteSpace:'nowrap'
-    }}>{children}</button>
-  );
+  // Owner filter options (PM only)
+  const ownerOptions=useMemo(()=>{
+    if(!me.isPM)return [];
+    const opts=[{value:'all',label:'Όλοι ιδιοκτήτες'},{value:'unassigned',label:'Χωρίς ανάθεση'}];
+    (collabs||[]).filter(c=>String(c.IsSales).toLowerCase()==='true'||c.IsSales===true)
+      .forEach(c=>opts.push({value:c.CollabID,label:c.Name}));
+    return opts;
+  },[collabs,me.isPM]);
 
-  return(<div className="fade" style={{padding:'18px 20px 90px'}}>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14}}>
-      <div>
-        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,letterSpacing:3,color:C.ac,marginBottom:2}}>NDT LEADS</div>
-        <h2 style={{fontSize:24,fontWeight:800,letterSpacing:-0.5}}>Pipeline</h2>
-      </div>
-      <div style={{display:'flex',gap:6}}>
-        <button onClick={load} title="Refresh" style={{background:'none',border:`1px solid ${C.br}`,color:C.mu,borderRadius:8,width:36,height:36,fontSize:14,cursor:'pointer'}}>↻</button>
-        <button onClick={onLogout} title="Reset PIN" style={{background:'none',border:`1px solid ${C.br}`,color:C.mu,borderRadius:8,width:36,height:36,fontSize:14,cursor:'pointer'}}>🔓</button>
-      </div>
-    </div>
-
+  return(<div className="fade" style={{padding:'0 20px 90px'}}>
     {toast&&<div style={{background:C.s2,border:`1px solid ${C.br}`,borderRadius:8,padding:'10px 14px',marginBottom:12,fontSize:13,textAlign:'center'}}>{toast}</div>}
 
-    <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 όνομα · τηλέφωνο · email"
+    <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 όνομα · τηλέφωνο · email · code"
       style={{width:'100%',background:C.s2,border:`1px solid ${C.br}`,borderRadius:10,padding:'12px 14px',color:C.tx,fontFamily:"'Bricolage Grotesque',sans-serif",fontSize:14,outline:'none',marginBottom:12}}/>
 
     <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:6,marginBottom:8}}>
-      <Chip active={filter==='active'} onClick={()=>setFilter('active')}>Ενεργά · {counts.active}</Chip>
-      <Chip active={filter==='all'}    onClick={()=>setFilter('all')}>Όλα · {counts.all}</Chip>
-      <Chip active={filter==='won'}    onClick={()=>setFilter('won')}    color={leadStatusInfo('Won').color}>Won · {counts.won}</Chip>
-      <Chip active={filter==='lost'}   onClick={()=>setFilter('lost')}   color={leadStatusInfo('Lost').color}>Lost · {counts.lost}</Chip>
-      <Chip active={filter==='cold'}   onClick={()=>setFilter('cold')}   color={leadStatusInfo('Cold').color}>Cold · {counts.cold}</Chip>
+      <FilterChip active={filter==='active'} onClick={()=>setFilter('active')}>Ενεργά · {counts.active}</FilterChip>
+      <FilterChip active={filter==='all'}    onClick={()=>setFilter('all')}>Όλα · {counts.all}</FilterChip>
+      <FilterChip active={filter==='won'}    onClick={()=>setFilter('won')}    color={leadStatusInfo('Won').color}>Won · {counts.won}</FilterChip>
+      <FilterChip active={filter==='lost'}   onClick={()=>setFilter('lost')}   color={leadStatusInfo('Lost').color}>Lost · {counts.lost}</FilterChip>
+      <FilterChip active={filter==='cold'}   onClick={()=>setFilter('cold')}   color={leadStatusInfo('Cold').color}>Cold · {counts.cold}</FilterChip>
     </div>
     <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:8,marginBottom:14}}>
-      <Chip active={brandFilter==='all'} onClick={()=>setBrandFilter('all')}>Όλα brands</Chip>
-      <Chip active={brandFilter==='AMAZE'} onClick={()=>setBrandFilter('AMAZE')} color='#A78BFA'>AMAZE</Chip>
-      <Chip active={brandFilter==='NDT'} onClick={()=>setBrandFilter('NDT')} color='#FF6A00'>NDT</Chip>
+      <FilterChip active={brandFilter==='all'} onClick={()=>setBrandFilter('all')}>Όλα brands</FilterChip>
+      <FilterChip active={brandFilter==='AMAZE'} onClick={()=>setBrandFilter('AMAZE')} color='#A78BFA'>AMAZE</FilterChip>
+      <FilterChip active={brandFilter==='NDT'} onClick={()=>setBrandFilter('NDT')} color='#FF6A00'>NDT</FilterChip>
     </div>
+    {me.isPM&&<div style={{marginBottom:14}}>
+      <Inp label="Ιδιοκτήτης" value={ownerFilter} onChange={setOwnerFilter} options={ownerOptions}/>
+    </div>}
 
     {loading
       ? <div style={{padding:40,textAlign:'center'}}><Spin/></div>
@@ -397,17 +902,24 @@ function ListView({pin,onAdd,onLogout}){
               const stale=days!==null&&days>=7&&['New','Contacted','Proposal_Sent','Negotiating'].includes(l.Status);
               const isActive=['New','Contacted','Proposal_Sent','Negotiating'].includes(l.Status);
               const isBusy=busyId===l.LeadID;
+              const ownerName=ownerNameOf(l.AssignedTo);
               return(<Card key={l.LeadID}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,marginBottom:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:15,fontWeight:700,marginBottom:3,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{l.ContactName||'—'}</div>
                     <Mono s c={C.mu} style={{letterSpacing:1.5}}>{l.ContactCode}{l.EventDate?' · '+fmtDate(l.EventDate):''}{l.EventType?' · '+l.EventType:''}</Mono>
                   </div>
-                  <span style={{fontSize:10,fontWeight:700,letterSpacing:1,color:brandColor(l.EventType),fontFamily:"'DM Mono',monospace"}}>{detectBrand(l.EventType)}</span>
+                  <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                    {me.isPM&&<OwnerBadge collabId={l.AssignedTo} name={ownerName}/>}
+                    <span style={{fontSize:10,fontWeight:700,letterSpacing:1,color:brandColor(l.EventType),fontFamily:"'DM Mono',monospace"}}>{detectBrand(l.EventType)}</span>
+                  </div>
                 </div>
                 {l.CommunicationLog&&<Mono s c={C.mu} style={{marginBottom:6,fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:11}}>💬 {String(l.CommunicationLog).split('\n').pop()}</Mono>}
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:isActive?8:0}}>
-                  <StatusBadge status={l.Status} small/>
+                  <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                    <LeadStatusBadge status={l.Status} small/>
+                    {me.isPM&&<Mono s c={C.mu} style={{fontSize:10}}>{ownerName}</Mono>}
+                  </div>
                   <Mono s c={stale?C.wa:C.mu}>{stale?'⚠ ':''}{fmtDays(days)}</Mono>
                 </div>
                 {isActive&&<div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
@@ -419,21 +931,24 @@ function ListView({pin,onAdd,onLogout}){
                   <button disabled={isBusy} onClick={()=>doStatus(l,'Cold')} style={chipStyle(leadStatusInfo('Cold').color,isBusy)}>Cold</button>
                 </div>}
                 {l.Status==='Lost'&&l.LostReason&&<Mono s c={C.mu} style={{marginTop:6}}>Λόγος: {LOST_REASONS_UI[l.LostReason]||l.LostReason}</Mono>}
-                <div style={{marginTop:8,borderTop:`1px solid ${C.br}`,paddingTop:8}}>
+                <div style={{marginTop:8,borderTop:`1px solid ${C.br}`,paddingTop:8,display:'flex',gap:6}}>
                   {noteFor===l.LeadID
-                    ?<div style={{display:'flex',gap:6}}>
+                    ?<>
                       <input autoFocus value={noteText} onChange={e=>setNoteText(e.target.value)}
                         placeholder="Σημείωση επικοινωνίας…"
                         style={{flex:1,background:C.s2,border:`1px solid ${C.br}`,borderRadius:8,padding:'8px 10px',color:C.tx,fontFamily:"'Bricolage Grotesque',sans-serif",fontSize:13,outline:'none'}}
-                        onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submitNote(l.LeadID);}}}
-                      />
+                        onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submitNote(l.LeadID);}}}/>
                       <button disabled={isBusy||!noteText.trim()} onClick={()=>submitNote(l.LeadID)}
                         style={{background:C.ac,color:'#000',border:'none',borderRadius:8,padding:'0 14px',fontWeight:700,fontSize:13,cursor:'pointer',opacity:(isBusy||!noteText.trim())?0.5:1}}>✓</button>
                       <button onClick={()=>{setNoteFor(null);setNoteText('');}}
                         style={{background:'none',border:`1px solid ${C.br}`,color:C.mu,borderRadius:8,padding:'0 10px',cursor:'pointer'}}>✕</button>
-                    </div>
-                    :<button onClick={()=>{setNoteFor(l.LeadID);setNoteText('');}}
-                      style={{background:'none',border:`1px solid ${C.br}`,color:C.mu,borderRadius:8,padding:'5px 10px',fontSize:12,cursor:'pointer',width:'100%'}}>+ Σημείωση</button>
+                    </>
+                    :<>
+                      <button onClick={()=>{setNoteFor(l.LeadID);setNoteText('');}}
+                        style={{flex:1,background:'none',border:`1px solid ${C.br}`,color:C.mu,borderRadius:8,padding:'5px 10px',fontSize:12,cursor:'pointer'}}>+ Σημείωση</button>
+                      {me.isPM&&isActive&&<button onClick={()=>setHandoffFor(l)}
+                        style={{background:'none',border:`1px solid ${C.br}`,color:C.inf,borderRadius:8,padding:'5px 10px',fontSize:12,cursor:'pointer',whiteSpace:'nowrap'}}>↔ Ανάθεση</button>}
+                    </>
                   }
                 </div>
               </Card>);
@@ -441,7 +956,6 @@ function ListView({pin,onAdd,onLogout}){
           </div>
     }
 
-    {/* Floating + button */}
     <button onClick={onAdd} style={{
       position:'fixed',bottom:24,right:24,
       width:60,height:60,borderRadius:30,
@@ -452,46 +966,135 @@ function ListView({pin,onAdd,onLogout}){
       lineHeight:1,paddingBottom:4,zIndex:50
     }}>+</button>
 
-    {lostFor&&<LostSheet busy={busyId===lostFor.LeadID}
-      onCancel={()=>setLostFor(null)}
-      onSubmit={submitLost}/>}
+    {lostFor&&<LostSheet busy={busyId===lostFor.LeadID} onCancel={()=>setLostFor(null)} onSubmit={submitLost}/>}
+    {handoffFor&&<LeadHandoffModal lead={handoffFor} pin={pin} collabs={collabs}
+      onDone={(r)=>{setHandoffFor(null);load();flash('✅ Ανατέθηκε στον/στην '+r.newCollabName);}}
+      onCancel={()=>setHandoffFor(null)}/>}
   </div>);
 }
 
-const chipStyle=(color,disabled)=>({
-  background:color+'18',color,
-  border:`1px solid ${color}55`,borderRadius:8,
-  padding:'5px 9px',fontSize:11,fontWeight:600,
-  fontFamily:"'Bricolage Grotesque',sans-serif",
-  cursor:disabled?'wait':'pointer',
-  opacity:disabled?0.5:1
-});
-
-// ─── ROOT ─────────────────────────────────────────────────────────────────
+// ─── ROOT APP ─────────────────────────────────────────────────────────────
 function App(){
   const [pin,setPin]=useState(null);
-  const [adding,setAdding]=useState(false);
+  const [me,setMe]=useState(null);
+  const [tab,setTab]=useState('prospects'); // prospects | pipeline
+  const [view,setView]=useState('list');    // list | add | detail
+  const [openProspectId,setOpenProspectId]=useState(null);
+  const [prospectRefresh,setProspectRefresh]=useState(0);
+  const [pipelineRefresh,setPipelineRefresh]=useState(0);
   const [clients,setClients]=useState([]);
+  const [collabs,setCollabs]=useState([]);
+  const [prospects,setProspects]=useState([]);
+  const [counts,setCounts]=useState({prospects:0,pipeline:0});
 
+  // Auto-restore PIN
   useEffect(()=>{
     const saved=localStorage.getItem(PIN_KEY);
-    if(saved)setPin(saved);
+    if(saved){
+      call('whoami',saved).then(m=>{setPin(saved);setMe(m);})
+        .catch(()=>{localStorage.removeItem(PIN_KEY);});
+    }
   },[]);
 
+  // Load shared data when authenticated
+  useEffect(()=>{
+    if(!pin||!me)return;
+    call('getClients',pin).then(d=>setClients(d||[])).catch(()=>{});
+    if(me.isPM){
+      call('getCollaborators',pin).then(d=>setCollabs(d||[])).catch(()=>{});
+    }
+  },[pin,me]);
+
+  // Refresh counts for tab badges
+  useEffect(()=>{
+    if(!pin||!me)return;
+    Promise.all([
+      call('getProspects',pin).catch(()=>[]),
+      call('getLeads',pin).catch(()=>[])
+    ]).then(([ps,ls])=>{
+      setProspects(ps||[]);
+      const myActiveProspects=(ps||[]).filter(p=>
+        (me.isPM?true:p.OwnerCollabID===me.collabId) &&
+        ['Active','Stale'].includes(p.Status)
+      ).length;
+      const activePipeline=(ls||[]).filter(l=>
+        ['New','Contacted','Proposal_Sent','Negotiating'].includes(l.Status)
+      ).length;
+      setCounts({prospects:myActiveProspects,pipeline:activePipeline});
+    });
+  },[pin,me,prospectRefresh,pipelineRefresh]);
+
+  const onAuth=(p,m)=>{setPin(p);setMe(m);};
   const logout=()=>{
     if(!confirm('Διαγραφή αποθηκευμένου PIN; Θα χρειαστεί να το ξανα-εισάγεις.'))return;
     localStorage.removeItem(PIN_KEY);
-    setPin(null);
+    setPin(null);setMe(null);
   };
 
-  useEffect(()=>{
-    if(!pin) return;
-    call('getClients',pin).then(d=>setClients(d||[])).catch(()=>{});
-  },[pin]);
+  if(!pin||!me) return <PinScreen onAuth={onAuth}/>;
 
-  if(!pin) return <PinScreen onAuth={setPin}/>;
-  if(adding) return <QuickAddForm pin={pin} clients={clients} onSaved={()=>setAdding(false)} onCancel={()=>setAdding(false)}/>;
-  return <ListView pin={pin} onAdd={()=>setAdding(true)} onLogout={logout}/>;
+  // Sub-views (no tab bar)
+  if(view==='add'&&tab==='prospects')
+    return <ProspectAddForm pin={pin}
+      onSaved={()=>{setView('list');setProspectRefresh(x=>x+1);}}
+      onCancel={()=>setView('list')}/>;
+  if(view==='add'&&tab==='pipeline')
+    return <QuickAddForm pin={pin} clients={clients}
+      onSaved={()=>{setView('list');setPipelineRefresh(x=>x+1);}}
+      onCancel={()=>setView('list')}/>;
+  if(view==='detail'&&tab==='prospects'&&openProspectId){
+    const p=prospects.find(x=>x.ProspectID===openProspectId);
+    if(p) return <ProspectDetailView prospect={p} pin={pin} me={me}
+      onBack={()=>{setView('list');setOpenProspectId(null);}}
+      onChanged={()=>setProspectRefresh(x=>x+1)}/>;
+  }
+
+  // Main tabbed view
+  return(<div style={{paddingBottom:60}}>
+    {/* Header */}
+    <div style={{padding:'18px 20px 10px',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+      <div>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,letterSpacing:3,color:C.ac,marginBottom:2}}>NDT LEADS</div>
+        <h2 style={{fontSize:24,fontWeight:800,letterSpacing:-0.5}}>{tab==='prospects'?'Prospects':'Pipeline'}</h2>
+        <Mono s c={C.mu} style={{marginTop:3}}>{me.name}{me.isPM?' · PM':''}</Mono>
+      </div>
+      <div style={{display:'flex',gap:6}}>
+        <button onClick={()=>{setProspectRefresh(x=>x+1);setPipelineRefresh(x=>x+1);}} title="Refresh" style={{background:'none',border:`1px solid ${C.br}`,color:C.mu,borderRadius:8,width:36,height:36,fontSize:14,cursor:'pointer'}}>↻</button>
+        <button onClick={logout} title="Reset PIN" style={{background:'none',border:`1px solid ${C.br}`,color:C.mu,borderRadius:8,width:36,height:36,fontSize:14,cursor:'pointer'}}>🔓</button>
+      </div>
+    </div>
+
+    {/* Tab Switcher */}
+    <div style={{padding:'0 20px 14px',display:'flex',gap:6}}>
+      {[{k:'prospects',l:'Prospects',c:counts.prospects},
+        {k:'pipeline', l:'Pipeline', c:counts.pipeline}].map(t=>(
+        <button key={t.k} onClick={()=>{setTab(t.k);setView('list');}} style={{
+          flex:1,
+          background:tab===t.k?C.s1:'transparent',
+          border:`1px solid ${tab===t.k?C.ac:C.br}`,
+          borderRadius:10,padding:'10px 12px',
+          color:tab===t.k?C.ac:C.mu,
+          fontFamily:"'Bricolage Grotesque',sans-serif",
+          fontSize:14,fontWeight:700,cursor:'pointer',
+          display:'flex',alignItems:'center',justifyContent:'center',gap:6
+        }}>
+          {t.l}
+          <span style={{background:tab===t.k?C.ac:C.s2,color:tab===t.k?'#000':C.tx,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:999,letterSpacing:0}}>{t.c}</span>
+        </button>
+      ))}
+    </div>
+
+    {/* Tab content */}
+    {tab==='prospects'
+      ? <ProspectsView pin={pin} me={me}
+          onAdd={()=>setView('add')}
+          onOpen={(id)=>{setOpenProspectId(id);setView('detail');}}
+          refreshKey={prospectRefresh}/>
+      : <PipelineView pin={pin} me={me} collabs={collabs}
+          onAdd={()=>setView('add')}
+          refreshKey={pipelineRefresh}/>
+    }
+  </div>);
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
