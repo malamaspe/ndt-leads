@@ -26,12 +26,9 @@ input[type=date]{color-scheme:dark}
 </head>
 <body>
 <div id="root"><div style="min-height:100vh;display:flex;align-items:center;justify-content:center"><div style="font-family:'DM Mono',monospace;font-size:11px;letter-spacing:4px;color:#FF6A00">LEADS…</div></div></div>
-<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" crossorigin></script>
-<script>window.React||document.write('<scr'+'ipt src="https://unpkg.com/react@18/umd/react.production.min.js"></scr'+'ipt>');</script>
-<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-<script>window.ReactDOM||document.write('<scr'+'ipt src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></scr'+'ipt>');</script>
-<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
-<script>window.Babel||document.write('<scr'+'ipt src="https://unpkg.com/@babel/standalone@7/babel.min.js"></scr'+'ipt>');</script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
 <script type="text/babel">
 const {useState,useEffect,useMemo,useRef} = React;
@@ -173,7 +170,18 @@ function ConflictBlock({conflict}){
 }
 
 // Soft client/lead dedupe (for direct lead creation flow — kept as warning)
-function normPhone(p){return String(p||'').replace(/[\s+\-()]/g,'');}
+// Mirrors _normalizePhone_ in Code.gs: any format → international digits (no '+').
+function normPhone(p){
+  const s=String(p==null?'':p).trim(); if(!s)return'';
+  const hadPlus=/^\+/.test(s);
+  let d=s.replace(/\D/g,''); if(!d)return'';
+  if(hadPlus){}
+  else if(d.slice(0,2)==='00')d=d.slice(2);
+  else if(d.length===10&&(d[0]==='6'||d[0]==='2'))d='30'+d;
+  else if(d.length===11&&d[0]==='0'&&(d[1]==='6'||d[1]==='2'))d='30'+d.slice(1);
+  if(d.length<8||d.length>15)return'';
+  return d;
+}
 function normEmail(e){return String(e||'').trim().toLowerCase();}
 function findClientMatch(phone, email, clients, excludeId){
   if(!clients||!clients.length)return null;
