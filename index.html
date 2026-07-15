@@ -850,7 +850,11 @@ function PipelineView({pin,me,onAdd,refreshKey,collabs}){
       setBusyId(null);return;
     }
     if(newStatus==='Lost'){setLostFor(lead);return;}
-    if(!confirm(`"${lead.ContactName}" → ${leadStatusInfo(newStatus).label};`))return;
+    if(newStatus==='Proposal_Sent'){
+      if(!confirm(`"${lead.ContactName}" → Προσφορά;\n\nΘα σταλεί αυτόματα email + SMS στον πελάτη με τον φάκελο της πρότασης. Ανέβασε πρώτα την πρόταση στον φάκελο "client_…".`))return;
+    }else{
+      if(!confirm(`"${lead.ContactName}" → ${leadStatusInfo(newStatus).label};`))return;
+    }
     setBusyId(lead.LeadID);
     try{await call('updateLeadStatus',pin,lead.LeadID,newStatus);await load();flash('✅');}
     catch(e){flash('❌ '+e.message);}
