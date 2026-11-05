@@ -22,6 +22,13 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:'Bricolag
 .slideUp{animation:slideUp .25s ease}
 select option{background:#191919;color:#F0F0F0}
 input[type=date]{color-scheme:dark}
+/* 9.4.11: σε υπολογιστή (γραφείο, τηλέφωνα) πλάτος οθόνης — λίστες σε στήλες, φόρμες σε άνετο πλάτος */
+@media (min-width:900px){
+  #root{max-width:1280px}
+  .lite-list{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));align-items:start;gap:10px!important}
+  .lite-narrow{max-width:780px;margin:0 auto}
+  .lite-sheet{max-width:640px}
+}
 </style>
 </head>
 <body>
@@ -334,8 +341,8 @@ function PinScreen({onAuth}){
 
 // ─── BOTTOM SHEET ─────────────────────────────────────────────────────────
 function BottomSheet({title,onClose,children}){
-  return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:100,display:'flex',alignItems:'flex-end'}} onClick={onClose}>
-    <div onClick={e=>e.stopPropagation()} className="slideUp" style={{background:C.s1,border:`1px solid ${C.br}`,borderTopLeftRadius:16,borderTopRightRadius:16,padding:'20px 22px 28px',width:'100%',maxHeight:'92vh',overflowY:'auto'}}>
+  return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:100,display:'flex',alignItems:'flex-end',justifyContent:'center'}} onClick={onClose}>
+    <div onClick={e=>e.stopPropagation()} className="slideUp lite-sheet" style={{background:C.s1,border:`1px solid ${C.br}`,borderTopLeftRadius:16,borderTopRightRadius:16,padding:'20px 22px 28px',width:'100%',maxHeight:'92vh',overflowY:'auto'}}>
       <div style={{width:40,height:4,background:C.br,borderRadius:2,margin:'0 auto 14px'}}/>
       {title&&<h3 style={{fontSize:18,fontWeight:800,marginBottom:14}}>{title}</h3>}
       {children}
@@ -657,7 +664,7 @@ function ProspectsView({pin,me,onAdd,onOpen,refreshKey}){
       ? <div style={{padding:40,textAlign:'center'}}><Spin/></div>
       : filtered.length===0
         ? <Empty text="Κανένα prospect"/>
-        : <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        : <div className="lite-list" style={{display:'flex',flexDirection:'column',gap:8}}>
             {filtered.map(p=>{
               const lastDays=daysSince(p.LastActivityDate||p.CreatedDate);
               const isMine=p.OwnerCollabID===me.collabId;
@@ -959,7 +966,7 @@ function PipelineView({pin,me,onAdd,refreshKey,collabs,notice}){
       ? <div style={{padding:40,textAlign:'center'}}><Spin/></div>
       : filtered.length===0
         ? <Empty text="Κανένα lead"/>
-        : <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        : <div className="lite-list" style={{display:'flex',flexDirection:'column',gap:8}}>
             {filtered.map(l=>{
               const days=daysSince(l.LastUpdated||l.CreatedDate);
               const stale=days!==null&&days>=7&&['New','Contacted','Proposal_Sent','Negotiating'].includes(l.Status);
@@ -1116,24 +1123,25 @@ function App(){
   if(!pin||!me) return <PinScreen onAuth={onAuth}/>;
 
   // Sub-views (no tab bar)
+  // 9.4.11: οι υπο-οθόνες σε άνετο πλάτος στον υπολογιστή (.lite-narrow)
   if(view==='add'&&tab==='prospects')
-    return <ProspectAddForm pin={pin}
+    return <div className="lite-narrow"><ProspectAddForm pin={pin}
       onSaved={()=>{setView('list');setProspectRefresh(x=>x+1);}}
-      onCancel={()=>setView('list')}/>;
+      onCancel={()=>setView('list')}/></div>;
   if(view==='add'&&tab==='pipeline')
-    return <QuickAddForm pin={pin}
+    return <div className="lite-narrow"><QuickAddForm pin={pin}
       onSaved={(r)=>{
         setView('list');setPipelineRefresh(x=>x+1);
         setPipelineNotice(r&&r.duplicate
           ?'ℹ Το lead '+r.contactCode+' είχε ήδη καταχωρηθεί — δεν δημιουργήθηκε δεύτερο.'
           :'✅ Lead '+((r&&r.contactCode)||'')+' καταχωρήθηκε'+(r&&r.amazeDocs?' · '+r.amazeDocs:''));
       }}
-      onCancel={()=>setView('list')}/>;
+      onCancel={()=>setView('list')}/></div>;
   if(view==='detail'&&tab==='prospects'&&openProspectId){
     const p=prospects.find(x=>x.ProspectID===openProspectId);
-    if(p) return <ProspectDetailView prospect={p} pin={pin} me={me}
+    if(p) return <div className="lite-narrow"><ProspectDetailView prospect={p} pin={pin} me={me}
       onBack={()=>{setView('list');setOpenProspectId(null);}}
-      onChanged={()=>setProspectRefresh(x=>x+1)}/>;
+      onChanged={()=>setProspectRefresh(x=>x+1)}/></div>;
   }
 
   // Main tabbed view
@@ -1146,6 +1154,8 @@ function App(){
         <Mono s c={C.mu} style={{marginTop:3}}>{me.name}{me.isPM?' · PM':''}</Mono>
       </div>
       <div style={{display:'flex',gap:6}}>
+        {/* 9.4.11: οδηγός πωλητή (SOP) — το link έρχεται από τον server */}
+        {me.sopUrl&&<a href={me.sopUrl} target="_blank" rel="noopener noreferrer" title="SOP Πωλητών" aria-label="SOP Πωλητών" style={{display:'flex',alignItems:'center',justifyContent:'center',border:`1px solid ${C.ac}55`,color:C.ac,borderRadius:8,height:36,padding:'0 10px',fontFamily:"'DM Mono',monospace",fontSize:11,textDecoration:'none'}}>📘 SOP</a>}
         <button onClick={()=>{setProspectRefresh(x=>x+1);setPipelineRefresh(x=>x+1);}} title="Refresh" style={{background:'none',border:`1px solid ${C.br}`,color:C.mu,borderRadius:8,width:36,height:36,fontSize:14,cursor:'pointer'}}>↻</button>
         <button onClick={logout} title="Αποσύνδεση" style={{background:'none',border:`1px solid ${C.br}`,color:C.mu,borderRadius:8,width:36,height:36,fontSize:14,cursor:'pointer'}}>🔓</button>
       </div>
