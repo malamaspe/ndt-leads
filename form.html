@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>AMAZE DJs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<!--
+  NDT OPS · Δημόσια φόρμα leads · build 9.9.2
+  Μία σελίδα για όλες τις φόρμες: form.html?f=<κωδικός> (+ &kiosk=1 για τα tablet του περιπτέρου).
+  Ρυθμίσεις φόρμας: OPS → Leads → 📋 Φόρμες. Server: apps-script/LeadForms.gs (getLeadFormPublic · submitLeadForm).
+  Χωρίς React / build: φορτώνει γρήγορα σε κινητό (QR) και σε iframe στο site.
+-->
+<style>
+:root{--bg:#141617;--card:#1d1f22;--br:#2e3135;--tx:#f2f3f5;--mu:#9aa0a6;--ac:#198fd9;--ok:#65bd7d;--er:#ff6b6b;--wa:#f5b942}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--tx);font-family:'Open Sans',Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%}
+body{min-height:100vh}
+.wrap{max-width:520px;margin:0 auto;padding:20px 16px 28px}
+.logo{display:block;margin:4px auto 14px;max-width:240px;width:70%;height:auto}
+.logoTxt{text-align:center;font-weight:700;letter-spacing:3px;font-size:15px;margin:6px 0 16px}
+.bar{display:flex;justify-content:flex-end;margin-bottom:6px}
+.lang{display:flex;border:1px solid var(--br);border-radius:999px;overflow:hidden}
+.lang button{background:none;border:0;color:var(--mu);font:600 12px 'Open Sans',sans-serif;padding:6px 12px;cursor:pointer}
+.lang button.on{background:var(--tx);color:var(--bg)}
+h1{font-size:22px;font-weight:700;text-align:center;line-height:1.25;margin-bottom:6px}
+.intro{color:var(--mu);text-align:center;font-size:14px;line-height:1.5;margin-bottom:18px}
+.card{background:var(--card);border:1px solid var(--br);border-radius:14px;padding:16px}
+label.f{display:block;font-size:12px;font-weight:600;color:var(--mu);letter-spacing:.3px;margin:12px 0 6px}
+label.f:first-child{margin-top:0}
+input[type=text],input[type=tel],input[type=email],input[type=date]{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--br);border-radius:10px;padding:13px 12px;font:16px 'Open Sans',sans-serif;outline:none;color-scheme:dark}
+input:focus{border-color:var(--ac)}
+input:disabled{opacity:.35}
+.chk{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--tx);margin-top:8px;cursor:pointer;line-height:1.4}
+.chk input{width:20px;height:20px;flex-shrink:0;accent-color:var(--ac);margin-top:1px}
+.hint{font-size:13px;color:var(--wa);margin-top:6px}
+.hint a{color:var(--wa);font-weight:700;cursor:pointer;text-decoration:underline}
+.privacy{font-size:11.5px;color:var(--mu);line-height:1.5;margin:6px 0 0 30px}
+.hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+.btn{display:block;width:100%;margin-top:18px;background:var(--ac);color:#fff;border:0;border-radius:12px;padding:15px;font:700 16px 'Open Sans',sans-serif;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:default}
+.err{background:rgba(255,107,107,.12);border:1px solid var(--er);color:var(--er);border-radius:10px;padding:10px 12px;font-size:13px;margin-top:14px;line-height:1.4}
+.done{text-align:center;padding:36px 12px}
+.done .big{font-size:46px;margin-bottom:10px;color:var(--ok)}
+.done p{font-size:17px;line-height:1.5}
+.done small{display:block;color:var(--mu);margin-top:14px;font-size:13px}
+.msg{text-align:center;color:var(--mu);padding:40px 12px;font-size:15px;line-height:1.5}
+.test{background:var(--wa);color:#000;font-weight:700;font-size:12px;text-align:center;border-radius:8px;padding:6px;margin-bottom:12px}
+.pend{text-align:center;font-size:12px;color:var(--wa);margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="msg">…</div></div>
+<script>
+(function () {
+  'use strict';
+  // build 9.9.2
+  var APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxu6oBabrOrGB6QGCoBg0hpQ8yK7aknfeuy3Li1r5F5ExgkmrCm1af4SuaIZKp6cV7x/exec';
+  var LOGO_AMAZE = 'https://www.amazedjs.gr/wp-content/uploads/2024/03/AMAZE-DJS-logo_2024-Landscape_Full-Color_Transparent-BG-1.png';
+  var q = new URLSearchParams(location.search);
+  var CODE = String(q.get('f') || '').trim().toLowerCase();
+  var KIOSK = q.get('kiosk') === '1';
+  var QKEY = 'lf_queue_' + CODE;
+  var app = document.getElementById('app');
+  var cfg = null, lang = (q.get('lang') || (navigator.language || 'el')).toLowerCase().indexOf('en') === 0 ? 'EN' : 'GR';
+  var state = { subId: newId(), busy: false, err: '', done: false, offline: false };
+  var vals = { name: '', phone: '', email: '', eventDate: '', noDate: false, venue: '', noVenue: false, consent: false };
+
+  var T = {
+    GR: { names: 'Ονόματα ζευγαριού', name: 'Ονοματεπώνυμο', phone: 'Κινητό', email: 'Email', wdate: 'Ημερομηνία γάμου', date: 'Ημερομηνία εκδήλωσης',
+      noDate: 'Δεν έχουμε κλείσει ακόμα', venue: 'Χώρος (π.χ. «Κτήμα Χ, Κηφισιά»)', noVenue: 'Δεν έχουμε βρει ακόμα', send: 'Αποστολή', sending: 'Αποστολή…',
+      didYou: 'Μήπως εννοείτε', notFound: 'Η φόρμα δεν βρέθηκε. Ελέγξτε τον σύνδεσμο.', net: 'Δεν υπάρχει σύνδεση — δοκιμάστε ξανά σε λίγο. Τα στοιχεία σας δεν χάθηκαν.',
+      queued: 'Η καταχώρηση αποθηκεύτηκε και θα σταλεί μόλις επανέλθει το internet.', pending: ' σε αναμονή αποστολής', test: '🧪 ΔΟΚΙΜΗ — τα email πηγαίνουν μόνο στο γραφείο',
+      phHint: 'π.χ. 69XXXXXXXX (ή με + για ξένο αριθμό)', req: 'Συμπληρώστε όλα τα πεδία.',
+      consentP: 'Συμφωνώ να επικοινωνήσει μαζί μας η {b} για την πρότασή της.', consentO: 'Συμφωνώ να επικοινωνήσει μαζί μας η {b} για την εκδήλωσή μας.',
+      privacy: 'Τα στοιχεία σας τα χρησιμοποιεί η {b} μόνο για να επικοινωνήσει μαζί σας γι\' αυτό το αίτημα. Δεν τα δίνουμε σε τρίτους. Αν δεν προχωρήσουμε μαζί, τα διαγράφουμε μέσα σε 12 μήνες. Για πρόσβαση, διόρθωση ή διαγραφή: {e}.',
+      next: 'Η φόρμα ετοιμάζεται για το επόμενο ζευγάρι…', again: 'Νέα καταχώρηση' },
+    EN: { names: 'Couple’s names', name: 'Full name', phone: 'Mobile', email: 'Email', wdate: 'Wedding date', date: 'Event date',
+      noDate: 'Not decided yet', venue: 'Venue (e.g. “X Estate, Kifisia”)', noVenue: 'Not found yet', send: 'Send', sending: 'Sending…',
+      didYou: 'Did you mean', notFound: 'Form not found. Please check the link.', net: 'No connection — please try again shortly. Your details are kept.',
+      queued: 'Your entry was saved and will be sent as soon as the internet is back.', pending: ' waiting to be sent', test: '🧪 TEST — emails go to the office only',
+      phHint: 'Use + and country code for non-Greek numbers', req: 'Please fill in all fields.',
+      consentP: 'I agree to be contacted by {b} about their proposal.', consentO: 'I agree to be contacted by {b} about our event.',
+      privacy: '{b} uses your details only to contact you about this request. We do not share them with third parties. If we do not work together, we delete them within 12 months. For access, correction or deletion: {e}.',
+      next: 'Getting ready for the next couple…', again: 'New entry' },
+  };
+  function t(k) { return T[lang][k]; }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function newId() {
+    try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* παλιός browser */ }
+    return 'x' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+  }
+  function brandName() { return cfg && cfg.brand === 'AMAZE' ? 'AMAZE DJs' : 'NDT Event Production'; }
+  function todayStr() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* χωρίς αποθήκευση */ } }
+  function queue() { try { return JSON.parse(lsGet(QKEY) || '[]'); } catch (e) { return []; } }
+  function setQueue(a) { lsSet(QKEY, JSON.stringify(a)); }
+
+  // Κλήση στον server. Σφάλμα δικτύου → e.net = true (η ίδια καταχώρηση μπορεί να ξανασταλεί: ίδιο subId = μία γραμμή)
+  function call(fn, args) {
+    var url = APPS_SCRIPT_URL + '?fn=' + encodeURIComponent(fn) + '&args=' + encodeURIComponent(JSON.stringify(args));
+    return fetch(url).then(function (r) { return r.text(); }, function () { var e = new Error('net'); e.net = true; throw e; })
+      .then(function (txt) {
+        var d = null; try { d = JSON.parse(txt); } catch (e) { /* σελίδα HTML αντί για JSON */ }
+        if (!d || typeof d !== 'object') { var e2 = new Error('net'); e2.net = true; throw e2; }
+        if (!d.ok) throw new Error(d.error || 'Error');
+        return d.result;
+      });
+  }
+
+  // Συχνά λάθη στο email (tablet / κινητό)
+  var FIX = { 'gmial.com': 'gmail.com', 'gmal.com': 'gmail.com', 'gmai.com': 'gmail.com', 'gamil.com': 'gmail.com', 'gmaill.com': 'gmail.com',
+    'gmail.co': 'gmail.com', 'gmail.gr': 'gmail.com', 'gmail.con': 'gmail.com', 'gnail.com': 'gmail.com', 'gmail.cm': 'gmail.com',
+    'hotmial.com': 'hotmail.com', 'hotmal.com': 'hotmail.com', 'hotmail.co': 'hotmail.com', 'hotmail.con': 'hotmail.com',
+    'yaho.com': 'yahoo.com', 'yahoo.co': 'yahoo.com', 'yahoo.con': 'yahoo.com', 'outlok.com': 'outlook.com', 'outlook.co': 'outlook.com',
+    'iclod.com': 'icloud.com', 'icloud.co': 'icloud.com', 'icloud.con': 'icloud.com' };
+  function emailFix(v) {
+    var m = String(v || '').trim().toLowerCase().match(/^([^@\s]+)@([^@\s]+)$/);
+    return m && FIX[m[2]] ? m[1] + '@' + FIX[m[2]] : '';
+  }
+
+  function postHeight() {
+    try { if (window.parent && window.parent !== window) window.parent.postMessage({ amzFormHeight: document.documentElement.scrollHeight }, '*'); } catch (e) { /* εκτός iframe */ }
+  }
+
+  function header() {
+    var h = '';
+    h += '<div class="bar"><div class="lang"><button type="button" data-lang="GR" class="' + (lang === 'GR' ? 'on' : '') + '">ΕΛ</button>' +
+      '<button type="button" data-lang="EN" class="' + (lang === 'EN' ? 'on' : '') + '">EN</button></div></div>';
+    h += cfg && cfg.brand === 'AMAZE' ? '<img class="logo" src="' + LOGO_AMAZE + '" alt="AMAZE DJs">' : '<div class="logoTxt">' + esc(brandName()) + '</div>';
+    if (cfg && cfg.test) h += '<div class="test">' + t('test') + '</div>';
+    return h;
+  }
+
+  function render() {
+    if (!cfg) return;
+    var tx = cfg.texts[lang] || cfg.texts.GR;
+    var h = header();
+    if (!cfg.found) h = '<div class="msg">' + t('notFound') + '</div>';
+    else if (!cfg.open) h += '<div class="msg">' + esc(tx.closed) + '</div>';
+    else if (state.done) {
+      h += '<div class="card done"><div class="big">✓</div><p>' + esc(tx.thanks) + '</p>' +
+        (state.offline ? '<small>' + t('queued') + '</small>' : '') +
+        (KIOSK ? '<small>' + t('next') + '</small>' : '<button type="button" class="btn" id="again" style="background:transparent;border:1px solid var(--br)">' + t('again') + '</button>') + '</div>';
+    } else {
+      var w = cfg.wedding, fix = emailFix(vals.email);
+      h += '<h1>' + esc(tx.title) + '</h1>' + (tx.intro ? '<div class="intro">' + esc(tx.intro) + '</div>' : '');
+      h += '<form class="card" id="frm" novalidate autocomplete="on">' +
+        '<label class="f" for="name">' + t(w ? 'names' : 'name') + '</label><input type="text" id="name" maxlength="100" autocomplete="name" value="' + esc(vals.name) + '">' +
+        '<label class="f" for="phone">' + t('phone') + '</label><input type="tel" id="phone" inputmode="tel" maxlength="20" autocomplete="tel" placeholder="69…" value="' + esc(vals.phone) + '">' +
+        '<label class="f" for="email">' + t('email') + '</label><input type="email" id="email" inputmode="email" maxlength="120" autocomplete="email" autocapitalize="off" value="' + esc(vals.email) + '">' +
+        (fix ? '<div class="hint">' + t('didYou') + ' <a id="fix" data-v="' + esc(fix) + '">' + esc(fix) + '</a>;</div>' : '') +
+        '<label class="f" for="eventDate">' + t(w ? 'wdate' : 'date') + '</label><input type="date" id="eventDate" min="' + todayStr() + '" value="' + esc(vals.eventDate) + '"' + (vals.noDate ? ' disabled' : '') + '>' +
+        '<label class="chk"><input type="checkbox" id="noDate"' + (vals.noDate ? ' checked' : '') + '>' + t('noDate') + '</label>' +
+        '<label class="f" for="venue">' + t('venue') + '</label><input type="text" id="venue" maxlength="150" value="' + esc(vals.venue) + '"' + (vals.noVenue ? ' disabled' : '') + '>' +
+        '<label class="chk"><input type="checkbox" id="noVenue"' + (vals.noVenue ? ' checked' : '') + '>' + t('noVenue') + '</label>' +
+        '<input type="text" class="hp" id="website" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">' +
+        '<label class="chk" style="margin-top:16px"><input type="checkbox" id="consent"' + (vals.consent ? ' checked' : '') + '>' +
+          esc(t(cfg.autoSend ? 'consentP' : 'consentO').replace('{b}', brandName())) + '</label>' +
+        '<div class="privacy">' + esc(t('privacy').replace('{b}', brandName()).replace('{e}', cfg.contactEmail || '')) + '</div>' +
+        (state.err ? '<div class="err" id="err">' + esc(state.err) + '</div>' : '') +
+        '<button class="btn" type="submit" id="send"' + (state.busy ? ' disabled' : '') + '>' + t(state.busy ? 'sending' : 'send') + '</button>' +
+        '</form>';
+    }
+    var p = queue().length;
+    if (KIOSK && p) h += '<div class="pend">⏳ ' + p + t('pending') + '</div>';
+    app.innerHTML = h;
+    document.documentElement.lang = lang === 'EN' ? 'en' : 'el';
+    bind();
+    postHeight();
+  }
+
+  function grab() {
+    ['name', 'phone', 'email', 'eventDate', 'venue'].forEach(function (k) { var el = document.getElementById(k); if (el) vals[k] = el.value; });
+    ['noDate', 'noVenue', 'consent'].forEach(function (k) { var el = document.getElementById(k); if (el) vals[k] = el.checked; });
+  }
+
+  function bind() {
+    Array.prototype.forEach.call(app.querySelectorAll('[data-lang]'), function (b) {
+      b.onclick = function () { grab(); lang = b.getAttribute('data-lang'); state.err = ''; render(); };
+    });
+    var f = document.getElementById('frm');
+    if (f) f.onsubmit = function (ev) { ev.preventDefault(); grab(); submit(); };
+    ['noDate', 'noVenue'].forEach(function (k) {
+      var el = document.getElementById(k);
+      if (el) el.onchange = function () { grab(); render(); };
+    });
+    var em = document.getElementById('email');
+    if (em) em.onblur = function () { var had = !!emailFix(vals.email); grab(); if (!!emailFix(vals.email) !== had) render(); };
+    var fx = document.getElementById('fix');
+    if (fx) fx.onclick = function () { grab(); vals.email = fx.getAttribute('data-v'); render(); };
+    var ag = document.getElementById('again');
+    if (ag) ag.onclick = function () { reset(); };
+  }
+
+  function reset() {
+    vals = { name: '', phone: '', email: '', eventDate: '', noDate: false, venue: '', noVenue: false, consent: false };
+    state = { subId: newId(), busy: false, err: '', done: false, offline: false };
+    render();
+    try { window.scrollTo(0, 0); } catch (e) { /* jsdom */ }
+  }
+
+  function payload() {
+    var hp = document.getElementById('website');
+    return { subId: state.subId, lang: lang, name: vals.name, phone: vals.phone, email: vals.email,
+      eventDate: vals.noDate ? '' : vals.eventDate, noDate: vals.noDate, venue: vals.noVenue ? '' : vals.venue, noVenue: vals.noVenue,
+      consent: vals.consent, channel: KIOSK ? 'kiosk' : 'web', website: hp ? hp.value : '' };
+  }
+
+  function submit() {
+    if (state.busy) return;
+    if (!String(vals.name).trim() || !String(vals.phone).trim() || !String(vals.email).trim() ||
+        (!vals.noDate && !vals.eventDate) || (!vals.noVenue && !String(vals.venue).trim())) { state.err = t('req'); render(); return; }
+    var d = payload();
+    state.busy = true; state.err = ''; render();
+    call('submitLeadForm', [CODE, d]).then(function () {
+      state.busy = false; state.done = true; state.offline = false; render(); afterDone();
+    }, function (e) {
+      state.busy = false;
+      if (e && e.net && KIOSK) {   // περίπτερο: κρατάμε την καταχώρηση και πάμε στο επόμενο ζευγάρι
+        var a = queue(); a.push(d); setQueue(a);
+        state.done = true; state.offline = true; render(); afterDone();
+      } else { state.err = e && e.net ? t('net') : (e && e.message) || 'Error'; render(); }
+    });
+  }
+  function afterDone() { if (KIOSK) setTimeout(reset, 6000); }
+
+  // Ουρά χωρίς internet (μόνο tablet): ξαναστέλνει μία-μία. Λάθος δεδομένων → πετιέται (δεν θα περάσει ποτέ).
+  var flushing = false;
+  function flush() {
+    var a = queue();
+    if (flushing || !a.length || !CODE) return;
+    flushing = true;
+    call('submitLeadForm', [CODE, a[0]]).then(function () { setQueue(queue().slice(1)); flushing = false; render(); flush(); },
+      function (e) { if (e && !e.net) setQueue(queue().slice(1)); flushing = false; if (e && !e.net) { render(); flush(); } });
+  }
+
+  function load() {
+    if (!CODE) { cfg = { found: false, texts: {} }; render(); return; }
+    call('getLeadFormPublic', [CODE]).then(function (c) {
+      cfg = c || { found: false };
+      if (!cfg.texts) cfg.texts = {};
+      render();
+      if (KIOSK) { flush(); setInterval(flush, 20000); }
+    }, function () {
+      app.innerHTML = '<div class="msg">' + t('net') + '</div>';
+      setTimeout(load, 8000);
+    });
+  }
+  window.addEventListener('online', flush);
+  window.addEventListener('resize', postHeight);
+  load();
+})();
+</script>
+</body>
+</html>
